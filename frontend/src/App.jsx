@@ -24,7 +24,7 @@ export default function App() {
     setLogs(["🔌 Connecting to A2A Backend..."]);
 
     // Connect to your FastAPI WebSocket
-    const websocket = new WebSocket("ws://127.0.0.1:8000/ws");
+    const websocket = new WebSocket("wss://a2a-doc-scraper-api.onrender.com/ws");
     setWs(websocket);
 
     websocket.onopen = () => {
