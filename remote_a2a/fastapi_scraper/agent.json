@@ -1,0 +1,30 @@
+{
+  "name": "fastapi_scraper",
+  "description": "Universal documentation crawler and builder agent that reconstructs complete documentation from any website and stores relationships in Neo4j.",
+  "url": "http://localhost:8000/a2a/fastapi_scraper",
+  "agent_id": "agent:fastapi_scraper",
+  "version": "2.0.0",
+  "capabilities": {
+    "GENERATE_TEXT": {}
+  },
+  "skills": [
+    {
+      "id": "skill:documentation_builder",
+      "name": "documentation_reconstruction",
+      "description": "Crawls documentation websites, extracts sections, stores relationships in Neo4j, and generates full Markdown documentation.",
+      "tags": [
+        "documentation",
+        "web-crawling",
+        "neo4j",
+        "knowledge-graph",
+        "python"
+      ]
+    }
+  ],
+  "defaultInputModes": [
+    "TEXT"
+  ],
+  "defaultOutputModes": [
+    "TEXT"
+  ]
+}

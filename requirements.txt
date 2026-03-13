@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+websockets
+aiohttp
+beautifulsoup4
+markdownify
+neo4j
+google-genai
+google-adk
+litellm
+python-dotenv
