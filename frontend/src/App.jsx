@@ -19,8 +19,8 @@ export default function App() {
     setIsRunning(true);
     setLogs(["🔌 Connecting to A2A Backend..."]);
 
-    // Ensure we use wss:// for the live Vercel deployment
-    const liveBackendUrl = "wss://a2a-doc-scraper.onrender.com/ws";
+    // Corrected to match the exact URL from your Render dashboard
+    const liveBackendUrl = "wss://a2a-doc-scraper-api.onrender.com/ws";
 
     const websocket = new WebSocket(liveBackendUrl);
     setWs(websocket);
