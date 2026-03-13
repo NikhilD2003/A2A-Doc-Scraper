@@ -1,1 +1,10 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Add any of your custom styles below this line */
+body {
+  margin: 0;
+  background-color: #0f172a; /* matches your dark theme */
+  color: white;
+}
