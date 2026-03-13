@@ -22,6 +22,18 @@ This project introduces a robust A2A architecture where the Large Language Model
 
 * ⚡ **Real-Time WebSocket UI:** A sleek React dashboard streams live terminal progress. Once compiled, it utilizes the modern File System Access API to trigger a native "Save As" browser popup, delivering the file directly to your local machine.
 
+## 🌐 Live Demo & Deployment
+
+The application is fully deployed and can be accessed at the following link:
+
+🚀 Live App: https://a2-a-doc-scraper.vercel.app
+
+System Dashboard Preview
+
+Architecture showing the real-time WebSocket connection between the React Frontend and the FastAPI Backend.
+
+![img.png](img.png)
+
 ## 🏗️ System Architecture
 
 The project is split into a decoupled Client-Server architecture:
