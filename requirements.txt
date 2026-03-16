@@ -9,3 +9,5 @@ google-genai
 google-adk
 litellm
 python-dotenv
+google-generativeai
+pydantic

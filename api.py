@@ -4,6 +4,8 @@ import asyncio
 from urllib.parse import urlparse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+import google.generativeai as genai
 
 os.environ['LITELLM_LOG'] = 'DEBUG'
 
@@ -12,6 +14,12 @@ from google.genai import types
 
 from remote_a2a.fastapi_scraper.agent import root_agent
 from remote_a2a.fastapi_scraper.tools import progress_queue, state
+
+# Import the graph manager so the API can fetch the Graph and Chat data
+try:
+    from database.graph_manager import db
+except ModuleNotFoundError:
+    from database.graph_manager import db
 
 app = FastAPI()
 
@@ -33,7 +41,10 @@ async def websocket_endpoint(websocket: WebSocket):
         config = json.loads(data)
         url = config.get("url")
 
-        await websocket.send_text(f"🚀 Starting A2A pipeline for: {url}")
+        # NEW: Capture the page limit from the React frontend slider!
+        limit = config.get("limit", 500)
+
+        await websocket.send_text(f"🚀 Starting A2A pipeline for: {url} (Limit: {limit} pages)")
 
         async def queue_reader():
             while True:
@@ -52,9 +63,10 @@ async def websocket_endpoint(websocket: WebSocket):
             app_name="doc_builder", user_id=user_id, session_id=session_id
         )
 
+        # NEW: Pass the limit directly into the AI's prompt instructions
         message = types.Content(
             role="user",
-            parts=[types.Part.from_text(text=f"Build documentation for {url}")]
+            parts=[types.Part.from_text(text=f"Build documentation for {url} with a maximum page limit of {limit}.")]
         )
 
         # Clear out any old memory from previous runs
@@ -87,7 +99,7 @@ async def websocket_endpoint(websocket: WebSocket):
         if not result_text:
             result_text = "# Error\nNo text was found."
 
-        # NEW: Send the file data back to React to trigger the Save popup
+        # Send the file data back to React to trigger the Save popup
         file_payload = {
             "type": "download",
             "filename": f"{site}_docs.md",
@@ -112,3 +124,54 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.close()
         except:
             pass
+
+
+# ------------------------------------------------------------------
+# --- NEW FEATURES: GRAPH VISUALIZATION AND CHAT API ENDPOINTS ---
+# ------------------------------------------------------------------
+
+class ChatRequest(BaseModel):
+    url: str
+    question: str
+
+
+@app.get("/api/graph")
+async def get_graph(url: str):
+    """Fetches the node/edge graph data for a specific scraped URL."""
+    try:
+        data = db.get_graph_data(url)
+        return data
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/chat")
+async def chat_with_docs(req: ChatRequest):
+    """Instant RAG: Answers questions based on the scraped markdown in Neo4j."""
+    try:
+        # 1. Fetch the scraped knowledge
+        pages = db.get_all_topics(req.url)
+        if not pages:
+            return {"answer": "No documentation found for this URL. Please scrape it first!"}
+
+        context = "\n".join([p["content"] for p in pages])
+
+        # 2. Ask Gemini 1.5 Flash (Super fast and cheap)
+        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+        model = genai.GenerativeModel("gemini-1.5-flash")
+
+        prompt = f"""
+        You are an expert AI assistant. Answer the user's question based strictly on the provided documentation context.
+        If the answer is not in the context, say "I cannot find the answer in the provided documentation."
+
+        Context (Truncated to fit):
+        {context[:60000]}
+
+        Question: {req.question}
+        """
+
+        response = model.generate_content(prompt)
+        return {"answer": response.text}
+
+    except Exception as e:
+        return {"answer": f"Error communicating with AI: {str(e)}"}
