@@ -5,7 +5,9 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-import google.generativeai as genai
+
+# NEW: Import the AsyncOpenAI client
+from openai import AsyncOpenAI
 
 os.environ['LITELLM_LOG'] = 'DEBUG'
 
@@ -140,24 +142,36 @@ async def chat_with_docs(req: ChatRequest):
         if not pages:
             return {"answer": "No documentation found for this URL. Please scrape it first!"}
 
-        # THE FIX: We added `if p.get("content")` to safely skip blank nodes!
         context = "\n".join([p["content"] for p in pages if p.get("content")])
 
-        genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        # --- NEW: OPENROUTER INTEGRATION ---
+        client = AsyncOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.getenv("OPENROUTER_API_KEY"),
+        )
 
-        prompt = f"""
+        system_prompt = f"""
         You are an expert AI assistant. Answer the user's question based strictly on the provided documentation context.
         If the answer is not in the context, say "I cannot find the answer in the provided documentation."
 
         Context (Truncated to fit):
         {context[:60000]}
-
-        Question: {req.question}
         """
 
-        response = model.generate_content(prompt)
-        return {"answer": response.text}
+        # OpenRouter uses the exact same interface as OpenAI
+        response = await client.chat.completions.create(
+            model="openai/openrouter/hunter-alpha",  # Put your exact requested model here!
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": req.question}
+            ],
+            extra_headers={
+                "HTTP-Referer": "https://a2a-doc-scraper.com",  # Recommended by OpenRouter
+                "X-Title": "A2A Doc Scraper",  # Recommended by OpenRouter
+            }
+        )
+
+        return {"answer": response.choices[0].message.content}
 
     except Exception as e:
         return {"answer": f"Error communicating with AI: {str(e)}"}
