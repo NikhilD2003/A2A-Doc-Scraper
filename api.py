@@ -19,7 +19,7 @@ from remote_a2a.fastapi_scraper.tools import progress_queue, state
 try:
     from database.graph_manager import db
 except ModuleNotFoundError:
-    from database.graph_manager import db
+    from graph_manager import db
 
 app = FastAPI()
 
@@ -40,8 +40,6 @@ async def websocket_endpoint(websocket: WebSocket):
         data = await websocket.receive_text()
         config = json.loads(data)
         url = config.get("url")
-
-        # NEW: Capture the page limit from the React frontend slider!
         limit = config.get("limit", 500)
 
         await websocket.send_text(f"🚀 Starting A2A pipeline for: {url} (Limit: {limit} pages)")
@@ -63,18 +61,14 @@ async def websocket_endpoint(websocket: WebSocket):
             app_name="doc_builder", user_id=user_id, session_id=session_id
         )
 
-        # NEW: Pass the limit directly into the AI's prompt instructions
         message = types.Content(
             role="user",
             parts=[types.Part.from_text(text=f"Build documentation for {url} with a maximum page limit of {limit}.")]
         )
 
-        # Clear out any old memory from previous runs
         state.final_markdown = ""
-
         await progress_queue.put("🧠 Agent initialized, planning workflow...")
 
-        # Run the AI
         async for event in runner.run_async(
                 user_id=user_id,
                 session_id=session_id,
@@ -82,7 +76,6 @@ async def websocket_endpoint(websocket: WebSocket):
         ):
             pass
 
-            # Grab pristine text directly from the Tool's secure memory
         await progress_queue.put("💾 Packaging file for download...")
 
         parsed = urlparse(url)
@@ -92,14 +85,10 @@ async def websocket_endpoint(websocket: WebSocket):
         else:
             site = parts[0]
 
-        # Get the perfect markdown file!
         result_text = state.final_markdown
-
-        # Failsafe if the scrape was entirely empty
         if not result_text:
             result_text = "# Error\nNo text was found."
 
-        # Send the file data back to React to trigger the Save popup
         file_payload = {
             "type": "download",
             "filename": f"{site}_docs.md",
@@ -127,7 +116,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 # ------------------------------------------------------------------
-# --- NEW FEATURES: GRAPH VISUALIZATION AND CHAT API ENDPOINTS ---
+# --- GRAPH VISUALIZATION AND CHAT API ENDPOINTS ---
 # ------------------------------------------------------------------
 
 class ChatRequest(BaseModel):
@@ -137,7 +126,6 @@ class ChatRequest(BaseModel):
 
 @app.get("/api/graph")
 async def get_graph(url: str):
-    """Fetches the node/edge graph data for a specific scraped URL."""
     try:
         data = db.get_graph_data(url)
         return data
@@ -147,16 +135,14 @@ async def get_graph(url: str):
 
 @app.post("/api/chat")
 async def chat_with_docs(req: ChatRequest):
-    """Instant RAG: Answers questions based on the scraped markdown in Neo4j."""
     try:
-        # 1. Fetch the scraped knowledge
         pages = db.get_all_topics(req.url)
         if not pages:
             return {"answer": "No documentation found for this URL. Please scrape it first!"}
 
-        context = "\n".join([p["content"] for p in pages])
+        # THE FIX: We added `if p.get("content")` to safely skip blank nodes!
+        context = "\n".join([p["content"] for p in pages if p.get("content")])
 
-        # 2. Ask Gemini 1.5 Flash (Super fast and cheap)
         genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
         model = genai.GenerativeModel("gemini-1.5-flash")
 
