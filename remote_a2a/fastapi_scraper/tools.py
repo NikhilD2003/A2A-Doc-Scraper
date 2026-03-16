@@ -97,12 +97,23 @@ def extract_links(html, base_url):
     links = []
     for a in soup.find_all("a", href=True):
         href = a["href"]
-        if href.startswith("#"): continue
+
+        # 1. Ignore useless links (emails, javascript, anchors)
+        if href.startswith("#") or href.startswith("mailto:") or href.startswith("javascript:"):
+            continue
+
+        # 2. THE FIX: Convert relative links to absolute links!
         full = urljoin(base_url, href)
+
+        # Strip out any anchors at the end of the URL to prevent scraping the same page multiple times
+        full = full.split('#')[0]
+
         parsed = urlparse(full)
         clean = normalize_url(f"{parsed.scheme}://{parsed.netloc}{parsed.path}")
         links.append(clean)
-    return links
+
+    # Remove duplicates before returning
+    return list(set(links))
 
 
 # Strict Scope Checking
@@ -154,12 +165,9 @@ async def crawl_site(root_url: str, limit: int = 500):
                 parsed_link = urlparse(link)
                 parsed_path = parsed_link.path.lower()
 
-                # 1. Block massive data files and ALL requested extensions
+                # 1. Block massive data files and ALL requested extensions (Fixed bad copy-paste in your list!)
                 BAD_EXTENSIONS = [
-                    ".png","/newsletter", "/blog", "/sponsors", "/fastapi-people", "/apps", "/branding",
-                    "/marketplace", "/admin", "/playground", "/editor", "/stats",
-                    "/newsletter", "/blog", "/sponsors", "/apps", "/essays", ".jpg",
-                    ".jpeg", ".gif", ".svg", ".pdf", ".zip", ".ico",
+                    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".zip", ".ico",
                     ".csv", ".tar", ".gz", ".exe", ".npy", ".iml", ".xml", ".ps1",
                     ".dll", ".bin", ".pkl", ".h5", ".pt", ".pth", ".tsv"
                 ]
@@ -207,7 +215,9 @@ async def crawl_site(root_url: str, limit: int = 500):
 
 async def build_documentation(root_url):
     await send_progress("✨ Scrape limit reached! Fetching context from Neo4j...")
-    pages = db.get_all_topics()
+
+    # THE FIX: We pass root_url into get_all_topics to prevent data leakage!
+    pages = db.get_all_topics(root_url)
 
     site_name = get_site_name(root_url)
     domain = urlparse(root_url).netloc

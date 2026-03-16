@@ -58,20 +58,26 @@ class GraphManager:
         with self.driver.session() as session:
             session.run(query, source=source, targets=targets)
 
-    def get_all_topics(self):
+    # THE FIX: Added target_url parameter and STARTS WITH filtering
+    def get_all_topics(self, target_url=None):
 
-        query = """
-        MATCH (t:Topic)
-        RETURN t.url AS url, t.content AS content
-        """
-
-        with self.driver.session() as session:
-            result = session.run(query)
-
-            return [
-                {"url": r["url"], "content": r["content"]}
-                for r in result
-            ]
+        if target_url:
+            query = """
+            MATCH (t:Topic)
+            WHERE t.url STARTS WITH $target_url
+            RETURN t.url AS url, t.content AS content
+            """
+            with self.driver.session() as session:
+                result = session.run(query, target_url=target_url)
+                return [{"url": r["url"], "content": r["content"]} for r in result]
+        else:
+            query = """
+            MATCH (t:Topic)
+            RETURN t.url AS url, t.content AS content
+            """
+            with self.driver.session() as session:
+                result = session.run(query)
+                return [{"url": r["url"], "content": r["content"]} for r in result]
 
 
 db = GraphManager()
