@@ -70,11 +70,9 @@ def extract_content(html):
     if not main:
         return ""
 
-    # Strip out noisy website elements (menus, headers, footers, sidebars)
     for tag in main(["nav", "header", "footer", "script", "style", "svg", "noscript", "iframe"]):
         tag.decompose()
 
-    # Strip common classes used for sidebars and tables of contents
     for menu in main.find_all(class_=["menu", "sidebar", "navigation", "toc"]):
         menu.decompose()
 
@@ -85,8 +83,6 @@ def extract_content(html):
 
     text = md(str(main), heading_style="ATX")
     text = text.replace("```xml", "```")
-
-    # Clean up massive blocks of empty lines
     text = re.sub(r'\n{3,}', '\n\n', text)
 
     return text.strip()
@@ -95,28 +91,28 @@ def extract_content(html):
 def extract_links(html, base_url):
     soup = BeautifulSoup(html, "html.parser")
     links = []
+
+    # THE FIX: If the base_url is a directory (doesn't end in a file extension),
+    # make sure it has a trailing slash so urljoin doesn't delete the last folder!
+    if not base_url.endswith('/') and not '.' in base_url.split('/')[-1]:
+        base_url += '/'
+
     for a in soup.find_all("a", href=True):
         href = a["href"]
 
-        # 1. Ignore useless links (emails, javascript, anchors)
         if href.startswith("#") or href.startswith("mailto:") or href.startswith("javascript:"):
             continue
 
-        # 2. THE FIX: Convert relative links to absolute links!
         full = urljoin(base_url, href)
-
-        # Strip out any anchors at the end of the URL to prevent scraping the same page multiple times
         full = full.split('#')[0]
 
         parsed = urlparse(full)
         clean = normalize_url(f"{parsed.scheme}://{parsed.netloc}{parsed.path}")
         links.append(clean)
 
-    # Remove duplicates before returning
     return list(set(links))
 
 
-# Strict Scope Checking
 def is_in_scope(link, root_url):
     parsed_link = urlparse(link)
     parsed_root = urlparse(root_url)
@@ -165,7 +161,6 @@ async def crawl_site(root_url: str, limit: int = 500):
                 parsed_link = urlparse(link)
                 parsed_path = parsed_link.path.lower()
 
-                # 1. Block massive data files and ALL requested extensions (Fixed bad copy-paste in your list!)
                 BAD_EXTENSIONS = [
                     ".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".zip", ".ico",
                     ".csv", ".tar", ".gz", ".exe", ".npy", ".iml", ".xml", ".ps1",
@@ -176,7 +171,6 @@ async def crawl_site(root_url: str, limit: int = 500):
                 LANG_PREFIXES = ["/de/", "/es/", "/fr/", "/ja/", "/ko/", "/pt/", "/zh/", "/ru/", "/tr/", "/uk/"]
                 if any(parsed_path.startswith(prefix) for prefix in LANG_PREFIXES): continue
 
-                # ALL requested blocked paths (deduplicated)
                 BLOCKED_PATHS = [
                     "/newsletter", "/blog", "/sponsors", "/fastapi-people", "/apps",
                     "/branding", "/marketplace", "/admin", "/playground", "/editor",
@@ -184,20 +178,16 @@ async def crawl_site(root_url: str, limit: int = 500):
                 ]
                 if any(parsed_path.startswith(p) for p in BLOCKED_PATHS): continue
 
-                # 2. THE GITHUB MAZE FIX!
                 if "github.com" in parsed_link.netloc:
-                    # A. Block commit hashes (40 character hex strings) to prevent reading history loops
                     if re.search(r'/[a-f0-9]{40}(?:/|$)', parsed_path):
                         continue
 
-                    # B. Block redundant GitHub UI tabs
                     gh_noise = [
                         "commits", "commit", "compare", "branches", "tags",
                         "pulls", "issues", "network", "stargazers", "watchers",
                         "forks", "releases", "graphs", "pulse", "security",
                         "community", "labels", "milestones", "search", "raw", "blame"
                     ]
-                    # Check if any of the noise words exist as a folder in the path
                     path_parts = parsed_path.split('/')
                     if any(noise in path_parts for noise in gh_noise):
                         continue
@@ -214,9 +204,10 @@ async def crawl_site(root_url: str, limit: int = 500):
 # ---------------------------------------------------
 
 async def build_documentation(root_url):
-    await send_progress("✨ Scrape limit reached! Fetching context from Neo4j...")
+    # THE FIX: Normalize the root_url before asking Neo4j for it so they match perfectly!
+    root_url = normalize_url(root_url)
 
-    # THE FIX: We pass root_url into get_all_topics to prevent data leakage!
+    await send_progress("✨ Scrape limit reached! Fetching context from Neo4j...")
     pages = db.get_all_topics(root_url)
 
     site_name = get_site_name(root_url)
@@ -255,7 +246,6 @@ async def build_documentation(root_url):
 
     final_text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', fix_anchors, final_text)
 
-    # SECURE MEMORY HANDOFF
     state.final_markdown = final_text
 
     await send_progress("📝 Raw Markdown securely saved to backend memory.")
