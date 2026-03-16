@@ -17,7 +17,6 @@ export default function App() {
 
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
 
-  // NEW: Graph Pan & Zoom States
   const [graphZoom, setGraphZoom] = useState(1);
   const [graphPan, setGraphPan] = useState({ x: 0, y: 0 });
   const [isDraggingGraph, setIsDraggingGraph] = useState(false);
@@ -27,7 +26,7 @@ export default function App() {
   const chatEndRef = useRef(null);
 
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs, activeTab]);
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatHistory]);
+  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatHistory, isTyping, activeTab]);
 
   const startScraping = () => {
     if (!url) return;
@@ -90,7 +89,6 @@ export default function App() {
       const res = await fetch(`https://a2a-doc-scraper-api.onrender.com/api/graph?url=${encodeURIComponent(url)}`);
       const data = await res.json();
       setGraphData(data);
-      // Auto-zoom out slightly if there are many nodes
       if (data.nodes.length > 20) setGraphZoom(0.6);
       else setGraphZoom(1);
       setGraphPan({ x: 0, y: 0 });
@@ -129,17 +127,24 @@ export default function App() {
     return <span className="text-slate-400">{log}</span>;
   };
 
-  // --- NEW FEATURE: INTERACTIVE PAN & ZOOM GRAPH ---
+  // Helper to make the AI's markdown bolding look nice
+  const formatChatMessage = (text) => {
+    return text.split(/(\*\*.*?\*\*)/g).map((part, i) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={i} className="font-bold text-white">{part.slice(2, -2)}</strong>;
+      }
+      return <span key={i}>{part}</span>;
+    });
+  };
+
   const renderGraph = () => {
     if (!graphData.nodes.length) return null;
 
-    // Base dimensions for the SVG canvas
     const width = 800;
     const height = 500;
     const centerX = width / 2;
     const centerY = height / 2;
 
-    // Dynamically expand the circle's radius based on node count to prevent overlapping
     const dynamicRadius = Math.max(200, graphData.nodes.length * 15);
 
     const positionedNodes = graphData.nodes.map((node, i) => {
@@ -155,7 +160,6 @@ export default function App() {
 
     return (
       <div className="relative w-full h-full overflow-hidden">
-        {/* On-Screen Zoom Controls */}
         <div className="absolute top-4 right-4 flex flex-col space-y-2 bg-slate-800 p-2 rounded-lg border border-slate-700 z-10 shadow-lg">
           <button onClick={() => setGraphZoom(z => Math.min(z + 0.2, 5))} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom In"><ZoomIn size={18}/></button>
           <button onClick={() => setGraphZoom(z => Math.max(z - 0.2, 0.1))} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom Out"><ZoomOut size={18}/></button>
@@ -163,10 +167,7 @@ export default function App() {
         </div>
 
         <svg
-          width="100%"
-          height="100%"
-          viewBox={`0 0 ${width} ${height}`}
-          className="w-full h-full"
+          width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="w-full h-full"
           onWheel={(e) => {
             const scaleAmount = -e.deltaY * 0.001;
             setGraphZoom(z => Math.max(0.1, Math.min(z + scaleAmount, 5)));
@@ -183,22 +184,14 @@ export default function App() {
           onMouseLeave={() => setIsDraggingGraph(false)}
           style={{ cursor: isDraggingGraph ? 'grabbing' : 'grab', touchAction: 'none' }}
         >
-          {/* Group wrapper for Pan & Zoom transforms centered around the middle of the canvas */}
           <g transform={`translate(${graphPan.x}, ${graphPan.y}) translate(${centerX}, ${centerY}) scale(${graphZoom}) translate(-${centerX}, -${centerY})`}>
-
-            {/* Draw Links */}
             {graphData.links.map((link, i) => {
               const source = getNodeCoords(link.source);
               const target = getNodeCoords(link.target);
               return (
-                <line
-                  key={i} x1={source.x} y1={source.y} x2={target.x} y2={target.y}
-                  stroke="rgba(148, 163, 184, 0.2)" strokeWidth="1"
-                />
+                <line key={i} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke="rgba(148, 163, 184, 0.2)" strokeWidth="1" />
               );
             })}
-
-            {/* Draw Nodes */}
             {positionedNodes.map((node, i) => (
               <g key={i} transform={`translate(${node.x}, ${node.y})`}>
                 <circle r="6" fill="#8b5cf6" className="shadow-lg drop-shadow-[0_0_8px_rgba(139,92,246,0.6)]" />
@@ -236,7 +229,6 @@ export default function App() {
                 />
               </div>
             </div>
-
             <div className="space-y-2">
               <label className="text-sm font-medium text-slate-400 flex justify-between">
                 <span>Page Limit</span>
@@ -250,7 +242,6 @@ export default function App() {
               </div>
             </div>
           </div>
-
           <div className="mt-6 flex justify-end">
             {!isRunning ? (
               <button onClick={startScraping} className="flex items-center bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg font-medium shadow-lg transition-all">
@@ -277,11 +268,11 @@ export default function App() {
           </button>
         </div>
 
-        {/* TAB CONTENT AREAS */}
-        <div className="bg-black rounded-b-xl rounded-tr-xl border border-slate-800 shadow-2xl overflow-hidden flex flex-col h-[550px]">
+        {/* TAB CONTENT AREAS (Increased height to 600px for better reading) */}
+        <div className="bg-black rounded-b-xl rounded-tr-xl border border-slate-800 shadow-2xl overflow-hidden flex flex-col h-[600px]">
 
           {activeTab === 'console' && (
-            <div className="flex-1 p-4 overflow-y-auto font-mono text-sm space-y-2">
+            <div className="flex-1 p-4 overflow-y-auto font-mono text-sm space-y-2 min-h-0">
               {logs.length === 0 && <div className="text-slate-600 italic">Ready to start scraping...</div>}
               {logs.map((log, index) => (
                 <div key={index} className="flex items-start">
@@ -294,7 +285,7 @@ export default function App() {
           )}
 
           {activeTab === 'graph' && (
-            <div className="flex-1 relative bg-slate-900 flex items-center justify-center">
+            <div className="flex-1 relative bg-slate-900 flex items-center justify-center min-h-0">
               {graphData.nodes.length > 0 ? (
                 renderGraph()
               ) : (
@@ -307,13 +298,16 @@ export default function App() {
             </div>
           )}
 
+          {/* CHAT TAB - FIXED SCROLLING AND PINNED INPUT */}
           {activeTab === 'chat' && (
-            <div className="flex-1 flex flex-col bg-slate-900">
-              <div className="flex-1 p-6 overflow-y-auto space-y-4">
+            <div className="flex-1 flex flex-col bg-slate-900 min-h-0">
+              {/* Message Container: overflow-y-auto enables scrolling, min-h-0 prevents box from stretching */}
+              <div className="flex-1 p-6 overflow-y-auto space-y-6 min-h-0">
                 {chatHistory.map((msg, idx) => (
                   <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[80%] rounded-2xl p-4 ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 border border-slate-700 text-slate-200'}`}>
-                      {msg.text}
+                    {/* Added whitespace-pre-wrap to respect paragraph breaks in Markdown */}
+                    <div className={`max-w-[85%] rounded-2xl p-4 whitespace-pre-wrap leading-relaxed shadow-md ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 border border-slate-700 text-slate-300'}`}>
+                      {formatChatMessage(msg.text)}
                     </div>
                   </div>
                 ))}
@@ -322,7 +316,9 @@ export default function App() {
                 )}
                 <div ref={chatEndRef} />
               </div>
-              <div className="p-4 border-t border-slate-800 bg-slate-950">
+
+              {/* Input Area: shrink-0 keeps it permanently pinned to the bottom */}
+              <div className="shrink-0 p-4 border-t border-slate-800 bg-slate-950">
                 <div className="flex space-x-4">
                   <input
                     type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)}
