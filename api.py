@@ -21,7 +21,7 @@ from remote_a2a.fastapi_scraper.tools import progress_queue, state
 try:
     from database.graph_manager import db
 except ModuleNotFoundError:
-    from graph_manager import db
+    from database.graph_manager import db
 
 app = FastAPI()
 
@@ -160,7 +160,7 @@ async def chat_with_docs(req: ChatRequest):
 
         # OpenRouter uses the exact same interface as OpenAI
         response = await client.chat.completions.create(
-            model="openai/openrouter/hunter-alpha",  # Put your exact requested model here!
+            model="openrouter/hunter-alpha",  # Put your exact requested model here!
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": req.question}
