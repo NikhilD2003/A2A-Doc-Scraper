@@ -56,5 +56,5 @@ root_agent = Agent(
     tools=[crawl_site, build_documentation],
 
     # OpenRouter model through OpenAI-compatible API
-    model="meta-llama/llama-3.3-70b-instruct:free"
+    model="openrouter/meta-llama/llama-3.3-70b-instruct:free"
 )
