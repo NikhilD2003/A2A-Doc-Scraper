@@ -7,7 +7,7 @@ markdownify
 neo4j
 google-genai
 google-adk
-litellm
+litellm>=1.75.5
 python-dotenv
 google-generativeai
 pydantic

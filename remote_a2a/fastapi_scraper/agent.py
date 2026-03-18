@@ -56,5 +56,5 @@ root_agent = Agent(
     tools=[crawl_site, build_documentation],
 
     # OpenRouter model through OpenAI-compatible API
-    model="openrouter/hunter-alpha"
+    model="openai/openrouter/hunter-alpha"
 )
