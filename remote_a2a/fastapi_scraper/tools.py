@@ -117,14 +117,27 @@ def is_in_scope(link, root_url):
     parsed_link = urlparse(link)
     parsed_root = urlparse(root_url)
 
+    # 1. Must stay on the same base domain
     if parsed_link.netloc != parsed_root.netloc:
         return False
 
+    # 2. Must stay within the root path
     root_path = parsed_root.path.rstrip('/')
-    if not root_path:
-        return True
+    if root_path and not parsed_link.path.startswith(root_path):
+        return False
 
-    return parsed_link.path.startswith(root_path)
+    # 3. NEW FIX: The Language Trap Blocklist
+    blocked_langs = [
+        '/zh/', '/ko/', '/ja/', '/ru/', '/de/',
+        '/fr/', '/es/', '/pt/', '/tr/', '/vi/', '/ar/', '/zh-hans/'
+    ]
+
+    # If the new URL contains a language code, BUT our starting URL didn't, block it.
+    for lang in blocked_langs:
+        if lang in link and lang not in root_url:
+            return False
+
+    return True
 
 
 # ---------------------------------------------------
