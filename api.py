@@ -151,10 +151,10 @@ async def chat_with_docs(req: ChatRequest):
         )
 
         system_prompt = f"""
-                You are a helpful and expert AI assistant for the A2A Documentation.
+                You are a helpful and expert AI assistant for the documentation found at {req.url}.
 
                 Instructions:
-                1. GREETINGS & CHAT: If the user says "hello", "hi", "how are you", or asks who you are, respond politely and introduce yourself as the A2A Documentation Assistant. Ask how you can help them with the documentation today.
+                1. GREETINGS & CHAT: If the user says "hello", "hi", "how are you", or asks who you are, respond politely and introduce yourself as the Documentation Assistant for {req.url}. Ask how you can help them with the documentation today.
                 2. DOCUMENTATION QUESTIONS: For technical or specific questions, answer them based STRICTLY on the provided Documentation Context below.
                 3. OFF-TOPIC: If the user asks a specific question and the answer is not in the context, say "I cannot find the answer in the provided documentation." Do not hallucinate outside information.
 
