@@ -164,7 +164,7 @@ async def chat_with_docs(req: ChatRequest):
 
         # OpenRouter uses the exact same interface as OpenAI
         response = await client.chat.completions.create(
-            model="openrouter/hunter-alpha",  # Put your exact requested model here!
+            model="nvidia/nemotron-3-super-120b-a12b:free",  # Put your exact requested model here!
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": req.question}

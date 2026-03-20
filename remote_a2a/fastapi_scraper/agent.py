@@ -56,5 +56,5 @@ root_agent = Agent(
     tools=[crawl_site, build_documentation],
 
     # OpenRouter model through OpenAI-compatible API
-    model="openrouter/meta-llama/llama-3.3-70b-instruct:free"
+    model="nvidia/nemotron-3-super-120b-a12b:free"
 )
