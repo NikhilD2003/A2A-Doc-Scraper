@@ -70,38 +70,75 @@ class GraphManager:
                 result = session.run(query)
                 return [{"url": r["url"], "content": r["content"]} for r in result]
 
-    # --- NEW FEATURE: INTERACTIVE GRAPH DATA ---
-    # --- UPDATED FEATURE: INTERACTIVE GRAPH DATA WITH CONTENT ---
+    # --- THE FIX: CONTEXTUAL URL HIERARCHY ---
     def get_graph_data(self, target_url: str):
-        # 1. Fetch all nodes AND their scraped content
+        # 1. Fetch all scraped nodes
         nodes_query = """
         MATCH (n:Topic)
         WHERE n.url STARTS WITH $target_url
         RETURN n.url AS id, n.content AS content
         """
-        # 2. Fetch the relationships (the lines between nodes)
-        links_query = """
-        MATCH (a:Topic)-[r:REFERENCES]->(b:Topic)
-        WHERE a.url STARTS WITH $target_url AND b.url STARTS WITH $target_url
-        RETURN a.url AS source, b.url AS target
-        """
 
         with self.driver.session() as session:
-            # Execute node query
             nodes_result = session.run(nodes_query, target_url=target_url)
             nodes = []
+            urls = []
+
             for record in nodes_result:
                 n_id = record["id"]
                 content = record["content"]
+
+                # Clean up the label for the frontend boxes
+                label = n_id.rstrip('/').split('/')[-1]
+                label = label.replace('.html', '').replace('.md', '')
+                if not label or n_id == target_url:
+                    label = "Documentation Home"
+
                 nodes.append({
                     "id": n_id,
-                    "label": n_id.split('/')[-1] or n_id,
+                    "label": label,
                     "content": content
                 })
+                urls.append(n_id)
 
-                # Execute links query
-            links_result = session.run(links_query, target_url=target_url)
-            links = [{"source": r["source"], "target": r["target"]} for r in links_result]
+            # 2. Build Contextual Links based on Folder Structure (Ignoring Hyperlinks)
+            links = []
+
+            def normalize(u):
+                return u.rstrip('/')
+
+            normalized_urls = {normalize(u): u for u in urls}
+            root_norm = normalize(target_url)
+
+            # Ensure the root node exists in our visual map
+            if root_norm not in normalized_urls:
+                normalized_urls[root_norm] = target_url
+                if not any(n["id"] == target_url for n in nodes):
+                    nodes.append({"id": target_url, "label": "Documentation Home", "content": "Root directory."})
+
+            # Calculate the exact logical parent for every single URL
+            for norm_url, original_url in normalized_urls.items():
+                if norm_url == root_norm:
+                    continue  # The root has no parent
+
+                # Chop off the end of the URL to find its parent folder
+                parent_path = norm_url.rsplit('/', 1)[0]
+
+                found_parent = None
+                # Keep chopping the URL down until we find a parent that actually exists in our scraped data
+                while len(parent_path) >= len(root_norm):
+                    if parent_path in normalized_urls:
+                        found_parent = normalized_urls[parent_path]
+                        break
+                    if '/' not in parent_path:
+                        break
+                    parent_path = parent_path.rsplit('/', 1)[0]
+
+                # Link to the calculated parent, or default to the root Home page
+                if found_parent and found_parent != original_url:
+                    links.append({"source": found_parent, "target": original_url})
+                elif original_url != target_url:
+                    links.append({"source": target_url, "target": original_url})
 
             return {"nodes": nodes, "links": links}
 
