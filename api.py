@@ -11,6 +11,10 @@ from google import genai
 from google.genai import types
 from google.adk.runners import InMemoryRunner
 
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv())
+print(f"API Key Loaded: {bool(os.getenv('GEMINI_API_KEY'))}")
+
 from remote_a2a.fastapi_scraper.agent import root_agent
 from remote_a2a.fastapi_scraper.tools import progress_queue, state
 
@@ -141,7 +145,7 @@ async def chat_with_docs(req: ChatRequest):
         context = "\n".join([p["content"] for p in pages if p.get("content")])
 
         # Native Google GenAI Client
-        client = genai.Client()
+        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
         system_prompt = f"""
         You are a helpful and expert AI assistant for the documentation found at {req.url}.
