@@ -99,24 +99,16 @@ def extract_content(content_obj):
     return text.strip()
 
 
+# --- THE FINAL FIX: Let crawler see sidebars to find next chapters! ---
 def extract_links(html, base_url):
     soup = BeautifulSoup(html, "html.parser")
-    main = (soup.select_one("article") or soup.select_one("main") or soup.select_one("div.md-content") or soup.body)
-
-    if main:
-        for tag in main(["nav", "header", "footer", "aside", "form"]):
-            tag.decompose()
-        for menu in main.find_all(class_=["menu", "sidebar", "navigation", "toc"]):
-            menu.decompose()
-        search_area = main
-    else:
-        search_area = soup
-
     links = []
+
     if not base_url.endswith('/') and not '.' in base_url.split('/')[-1]:
         base_url += '/'
 
-    for a in search_area.find_all("a", href=True):
+    # Allow the crawler to look at the whole page (including sidebars) for links
+    for a in soup.find_all("a", href=True):
         href = a["href"]
         if href.startswith("#") or href.startswith("mailto:") or href.startswith("javascript:"):
             continue
