@@ -70,79 +70,83 @@ class GraphManager:
                 result = session.run(query)
                 return [{"url": r["url"], "content": r["content"]} for r in result]
 
-    # --- THE FIX: BFS SPANNING TREE ---
+    # --- THE FIX: STRICT URL FOLDER PARSER WITH SYNTHETIC NODES ---
     def get_graph_data(self, target_url: str):
-        # 1. Fetch all Nodes
         nodes_query = """
         MATCH (n:Topic)
         WHERE n.url STARTS WITH $target_url
         RETURN n.url AS id, n.content AS content
         """
 
-        # 2. Fetch all raw Hyperlinks
-        links_query = """
-        MATCH (a:Topic)-[:REFERENCES]->(b:Topic)
-        WHERE a.url STARTS WITH $target_url AND b.url STARTS WITH $target_url
-        RETURN a.url AS source, b.url AS target
-        """
-
         with self.driver.session() as session:
-            # Process Nodes
             nodes_result = session.run(nodes_query, target_url=target_url)
-            nodes = []
-            valid_urls = set()
 
+            # Normalize target URL (remove trailing slash)
+            base_url = target_url.rstrip('/')
+
+            all_nodes = {}
+            links = set()
+
+            # Helper function to create clean labels
+            def create_label(url_string):
+                label = url_string.split('/')[-1]
+                label = label.replace('.html', '').replace('.md', '').replace('.rst', '').replace('.txt', '')
+                if not label or url_string == base_url:
+                    return "Home"
+                # Make it pretty (e.g. "a2a-and-mcp" -> "A2a And Mcp")
+                return label.replace('-', ' ').title()
+
+            # Helper function to add a node to our dictionary
+            def add_node(url_string, is_scraped=True, content=""):
+                if url_string not in all_nodes:
+                    all_nodes[url_string] = {
+                        "id": url_string,
+                        "label": create_label(url_string),
+                        "content": content if is_scraped else "📁 **Folder Directory**\n\nNo direct content was scraped for this folder, but it contains the child pages linked below."
+                    }
+
+            # 1. Load all physically scraped nodes
             for record in nodes_result:
-                n_id = record["id"]
+                url = record["id"].rstrip('/')
+                add_node(url, is_scraped=True, content=record["content"])
 
-                # Format a clean, readable label
-                label = n_id.rstrip('/').split('/')[-1]
-                label = label.replace('.html', '').replace('.md', '')
-                if not label or n_id == target_url:
-                    label = "Documentation Home"
+            # Ensure the root node exists
+            if base_url not in all_nodes:
+                add_node(base_url, is_scraped=False)
 
-                nodes.append({"id": n_id, "label": label, "content": record["content"]})
-                valid_urls.add(n_id)
+            # 2. Build the hierarchy mathematically based on URL slashes
+            for url in list(all_nodes.keys()):
+                if url == base_url:
+                    continue
 
-            # Ensure the root target URL exists in the dataset
-            root_url = target_url.rstrip('/') + '/'
-            if root_url not in valid_urls and target_url in valid_urls:
-                root_url = target_url
-            elif root_url not in valid_urls:
-                nodes.append({"id": root_url, "label": "Documentation Home", "content": "Root Node"})
-                valid_urls.add(root_url)
+                current_url = url
+                # Work our way backwards up the folder tree until we hit the base URL
+                while current_url != base_url and len(current_url) > len(base_url):
+                    # Chop off the last segment to find the parent folder
+                    # e.g., site.com/latest/topics/a2a -> site.com/latest/topics
+                    parent_url = current_url.rsplit('/', 1)[0]
 
-            # Process Links into an Adjacency List
-            links_result = session.run(links_query, target_url=target_url)
-            adj = {u: [] for u in valid_urls}
+                    # Safety check: don't go higher than the target URL
+                    if not parent_url.startswith(base_url):
+                        links.add((base_url, url))
+                        break
 
-            for record in links_result:
-                src = record["source"]
-                tgt = record["target"]
-                if src in adj and tgt in valid_urls:
-                    adj[src].append(tgt)
+                    # If this folder doesn't exist as a node yet, synthesize it!
+                    if parent_url not in all_nodes:
+                        add_node(parent_url, is_scraped=False)
 
-            # 3. Build the clean Spanning Tree (Breadth-First Search)
-            tree_links = []
-            visited = set([root_url])
-            queue = [root_url]
+                    # Draw the line from the folder to the file
+                    links.add((parent_url, current_url))
 
-            while queue:
-                current = queue.pop(0)
-                for neighbor in adj[current]:
-                    # If we haven't seen this page yet, link it to the current page!
-                    # This naturally destroys the circular "Next Steps" links.
-                    if neighbor not in visited:
-                        visited.add(neighbor)
-                        tree_links.append({"source": current, "target": neighbor})
-                        queue.append(neighbor)
+                    # Move up to the next folder level for the loop
+                    current_url = parent_url
 
-            # 4. Fallback: Attach any isolated/orphan pages directly to the root
-            for u in valid_urls:
-                if u not in visited:
-                    tree_links.append({"source": root_url, "target": u})
+            formatted_links = [{"source": src, "target": tgt} for src, tgt in links]
 
-            return {"nodes": nodes, "links": tree_links}
+            return {
+                "nodes": list(all_nodes.values()),
+                "links": formatted_links
+            }
 
 
 db = GraphManager()
