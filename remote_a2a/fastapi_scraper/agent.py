@@ -1,15 +1,13 @@
 from google.adk.agents.llm_agent import Agent
 from dotenv import load_dotenv
 from pathlib import Path
-
+import os
+from dotenv import load_dotenv, find_dotenv
 # Import tools
-from .tools import crawl_site, build_documentation
+load_dotenv(find_dotenv())
 
-# ---------------------------------------------------
-# LOAD ENVIRONMENT VARIABLES FROM PROJECT ROOT
-# ---------------------------------------------------
-ROOT_DIR = Path(__file__).resolve().parents[2]
-load_dotenv(ROOT_DIR / ".env")
+# Import tools (Must happen after environment is loaded)
+from .tools import crawl_site, build_documentation
 
 # ---------------------------------------------------
 # SYSTEM INSTRUCTION
