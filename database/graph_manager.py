@@ -14,7 +14,10 @@ class GraphManager:
     def __init__(self):
         self.driver = GraphDatabase.driver(
             NEO4J_URI,
-            auth=(NEO4J_USER, NEO4J_PASSWORD)
+            auth=(NEO4J_USER, NEO4J_PASSWORD),
+            keep_alive = True,  # Sends TCP keep-alive pings
+            max_connection_lifetime = 30 * 60,  # Recycles connections after 30 mins
+            max_connection_pool_size = 50
         )
 
     def close(self):
