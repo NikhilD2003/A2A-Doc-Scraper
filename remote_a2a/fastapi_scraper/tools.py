@@ -33,7 +33,10 @@ async def send_progress(msg: str):
     await progress_queue.put(msg)
 
 
+# --- THE FIX 1: Bulletproof URL Normalizer ---
 def normalize_url(url):
+    if not url.startswith("http"):
+        url = "https://" + url
     parsed = urlparse(url)
     clean = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
     if clean.endswith("/") and parsed.path != "/":
@@ -96,12 +99,10 @@ def extract_content(content_obj):
     return text.strip()
 
 
-# --- THE FIX: Clean HTML before extracting links to break circular dependencies! ---
 def extract_links(html, base_url):
     soup = BeautifulSoup(html, "html.parser")
     main = (soup.select_one("article") or soup.select_one("main") or soup.select_one("div.md-content") or soup.body)
 
-    # Destroy navigation sidebars so we ONLY get contextual, in-text links
     if main:
         for tag in main(["nav", "header", "footer", "aside", "form"]):
             tag.decompose()
@@ -217,6 +218,15 @@ async def build_documentation(root_url):
     root_url = normalize_url(root_url)
     await send_progress("✨ Scrape limit reached! Fetching context from Neo4j...")
     pages = db.get_all_topics(root_url)
+
+    # --- THE FIX 2: LLM Hallucination Safeguard ---
+    # If the LLM passed a bad URL and Neo4j found nothing, just grab EVERYTHING in the DB.
+    if not pages:
+        await send_progress("⚠️ Attempting fallback data extraction...")
+        pages = db.get_all_topics()
+        if pages:
+            # Use the most prominent URL from the DB as the new root
+            root_url = pages[0].get("url", root_url)
 
     site_name = get_site_name(root_url)
     domain = urlparse(root_url).netloc
