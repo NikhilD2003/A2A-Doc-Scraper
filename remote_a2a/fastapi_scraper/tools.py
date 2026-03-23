@@ -70,7 +70,8 @@ def extract_content(html):
     if not main:
         return ""
 
-    for tag in main(["nav", "header", "footer", "script", "style", "svg", "noscript", "iframe"]):
+    # THE FIX: Added "aside" and "form" to destroy sidebars and search boxes!
+    for tag in main(["nav", "header", "footer", "script", "style", "svg", "noscript", "iframe", "aside", "form"]):
         tag.decompose()
 
     for menu in main.find_all(class_=["menu", "sidebar", "navigation", "toc"]):
@@ -157,8 +158,8 @@ async def crawl_site(root_url: str, limit: int = 500):
             content = extract_content(html)
             db.upsert_topic(url, content)
 
-            # --- THE FIX: AI RATE LIMIT PROTECTION ---
-            # Ensures you never exceed 15 requests per minute!
+            # Note: Kept the 4-second delay here. Even though OpenRouter doesn't have
+            # Google's strict 15 RPM limit, it prevents us from hammering Neo4j and the target website!
             await asyncio.sleep(4)
 
             links = extract_links(html, url)
