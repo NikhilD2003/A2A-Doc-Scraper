@@ -71,28 +71,39 @@ class GraphManager:
                 return [{"url": r["url"], "content": r["content"]} for r in result]
 
     # --- NEW FEATURE: INTERACTIVE GRAPH DATA ---
+    # --- UPDATED FEATURE: INTERACTIVE GRAPH DATA WITH CONTENT ---
     def get_graph_data(self, target_url: str):
-        query = """
+        # 1. Fetch all nodes AND their scraped content
+        nodes_query = """
+        MATCH (n:Topic)
+        WHERE n.url STARTS WITH $target_url
+        RETURN n.url AS id, n.content AS content
+        """
+        # 2. Fetch the relationships (the lines between nodes)
+        links_query = """
         MATCH (a:Topic)-[r:REFERENCES]->(b:Topic)
         WHERE a.url STARTS WITH $target_url AND b.url STARTS WITH $target_url
         RETURN a.url AS source, b.url AS target
         """
+
         with self.driver.session() as session:
-            result = session.run(query, target_url=target_url)
-            nodes = set()
-            links = []
+            # Execute node query
+            nodes_result = session.run(nodes_query, target_url=target_url)
+            nodes = []
+            for record in nodes_result:
+                n_id = record["id"]
+                content = record["content"]
+                nodes.append({
+                    "id": n_id,
+                    "label": n_id.split('/')[-1] or n_id,
+                    "content": content
+                })
 
-            for record in result:
-                source = record["source"]
-                target = record["target"]
-                nodes.add(source)
-                nodes.add(target)
-                links.append({"source": source, "target": target})
+                # Execute links query
+            links_result = session.run(links_query, target_url=target_url)
+            links = [{"source": r["source"], "target": r["target"]} for r in links_result]
 
-            return {
-                "nodes": [{"id": n, "label": n.split('/')[-1] or n} for n in nodes],
-                "links": links
-            }
+            return {"nodes": nodes, "links": links}
 
 
 db = GraphManager()

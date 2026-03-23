@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Play, Square, Globe, Terminal, Server, MessageSquare, Network, Send, ZoomIn, ZoomOut, Maximize } from 'lucide-react';
+import { Play, Square, Globe, Terminal, Server, MessageSquare, Network, Send, ZoomIn, ZoomOut, Maximize, X, ExternalLink } from 'lucide-react';
 
 export default function App() {
   const [url, setUrl] = useState("https://a2a-protocol.org/latest/");
@@ -16,6 +16,8 @@ export default function App() {
   const [isTyping, setIsTyping] = useState(false);
 
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
+  // FIX: State for the interactive details sidebar
+  const [selectedNode, setSelectedNode] = useState(null);
 
   const [graphZoom, setGraphZoom] = useState(1);
   const [graphPan, setGraphPan] = useState({ x: 0, y: 0 });
@@ -127,7 +129,6 @@ export default function App() {
     return <span className="text-slate-400">{log}</span>;
   };
 
-  // Helper to make the AI's markdown bolding look nice
   const formatChatMessage = (text) => {
     return text.split(/(\*\*.*?\*\*)/g).map((part, i) => {
       if (part.startsWith('**') && part.endsWith('**')) {
@@ -159,15 +160,17 @@ export default function App() {
     const getNodeCoords = (id) => positionedNodes.find(n => n.id === id) || { x: centerX, y: centerY };
 
     return (
-      <div className="relative w-full h-full overflow-hidden">
+      <div className="relative w-full h-full overflow-hidden flex">
+        {/* GRAPH CONTROLS */}
         <div className="absolute top-4 right-4 flex flex-col space-y-2 bg-slate-800 p-2 rounded-lg border border-slate-700 z-10 shadow-lg">
           <button onClick={() => setGraphZoom(z => Math.min(z + 0.2, 5))} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom In"><ZoomIn size={18}/></button>
           <button onClick={() => setGraphZoom(z => Math.max(z - 0.2, 0.1))} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom Out"><ZoomOut size={18}/></button>
           <button onClick={() => { setGraphZoom(graphData.nodes.length > 20 ? 0.6 : 1); setGraphPan({x:0, y:0}); }} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Reset View"><Maximize size={18}/></button>
         </div>
 
+        {/* SVG GRAPH */}
         <svg
-          width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="w-full h-full"
+          width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="flex-1 h-full"
           onWheel={(e) => {
             const scaleAmount = -e.deltaY * 0.001;
             setGraphZoom(z => Math.max(0.1, Math.min(z + scaleAmount, 5)));
@@ -194,14 +197,46 @@ export default function App() {
             })}
             {positionedNodes.map((node, i) => (
               <g key={i} transform={`translate(${node.x}, ${node.y})`}>
-                <circle r="6" fill="#8b5cf6" className="shadow-lg drop-shadow-[0_0_8px_rgba(139,92,246,0.6)]" />
-                <text y="20" fill="#cbd5e1" fontSize="11" fontWeight="500" textAnchor="middle" className="pointer-events-none select-none drop-shadow-md">
+                {/* FIX: Added onClick to circle to select node */}
+                <circle
+                  r="8"
+                  fill={selectedNode?.id === node.id ? "#3b82f6" : "#8b5cf6"}
+                  className="cursor-pointer transition-all hover:r-10 shadow-lg drop-shadow-[0_0_8px_rgba(139,92,246,0.6)]"
+                  onClick={() => setSelectedNode(node)}
+                />
+                <text y="22" fill="#cbd5e1" fontSize="11" fontWeight="500" textAnchor="middle" className="pointer-events-none select-none drop-shadow-md">
                   {node.id.split('/').filter(Boolean).pop() || node.id}
                 </text>
               </g>
             ))}
           </g>
         </svg>
+
+        {/* FIX: NODE DETAILS SIDEBAR */}
+        {selectedNode && (
+          <div className="absolute top-0 right-0 w-80 h-full bg-slate-900 border-l border-slate-700 shadow-2xl z-20 flex flex-col animate-in slide-in-from-right duration-300">
+             <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
+               <h3 className="font-bold text-blue-400 truncate pr-2">{selectedNode.label || "Node Details"}</h3>
+               <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white transition-colors">
+                 <X size={20} />
+               </button>
+             </div>
+             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+               <div>
+                 <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Source URL</label>
+                 <a href={selectedNode.id} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline flex items-center mt-1 break-all">
+                   {selectedNode.id} <ExternalLink size={10} className="ml-1 shrink-0" />
+                 </a>
+               </div>
+               <div>
+                 <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Scraped Content</label>
+                 <div className="mt-2 text-sm text-slate-300 leading-relaxed whitespace-pre-wrap font-sans">
+                   {selectedNode.content || "No content extracted for this node."}
+                 </div>
+               </div>
+             </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -268,7 +303,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* TAB CONTENT AREAS (Increased height to 600px for better reading) */}
+        {/* TAB CONTENT AREAS */}
         <div className="bg-black rounded-b-xl rounded-tr-xl border border-slate-800 shadow-2xl overflow-hidden flex flex-col h-[600px]">
 
           {activeTab === 'console' && (
@@ -298,14 +333,11 @@ export default function App() {
             </div>
           )}
 
-          {/* CHAT TAB - FIXED SCROLLING AND PINNED INPUT */}
           {activeTab === 'chat' && (
             <div className="flex-1 flex flex-col bg-slate-900 min-h-0">
-              {/* Message Container: overflow-y-auto enables scrolling, min-h-0 prevents box from stretching */}
               <div className="flex-1 p-6 overflow-y-auto space-y-6 min-h-0">
                 {chatHistory.map((msg, idx) => (
                   <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    {/* Added whitespace-pre-wrap to respect paragraph breaks in Markdown */}
                     <div className={`max-w-[85%] rounded-2xl p-4 whitespace-pre-wrap leading-relaxed shadow-md ${msg.role === 'user' ? 'bg-blue-600 text-white' : 'bg-slate-800 border border-slate-700 text-slate-300'}`}>
                       {formatChatMessage(msg.text)}
                     </div>
@@ -317,7 +349,6 @@ export default function App() {
                 <div ref={chatEndRef} />
               </div>
 
-              {/* Input Area: shrink-0 keeps it permanently pinned to the bottom */}
               <div className="shrink-0 p-4 border-t border-slate-800 bg-slate-950">
                 <div className="flex space-x-4">
                   <input
