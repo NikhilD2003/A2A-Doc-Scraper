@@ -6,7 +6,6 @@ import os
 # Import tools
 from .tools import crawl_site, build_documentation
 
-
 # ---------------------------------------------------
 # LOAD ENVIRONMENT VARIABLES FROM PROJECT ROOT
 # ---------------------------------------------------
@@ -17,10 +16,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 # Load .env from root directory
 load_dotenv(ROOT_DIR / ".env")
 
-# Configure OpenRouter as OpenAI-compatible API
-os.environ["OPENAI_API_KEY"] = os.getenv("OPENROUTER_API_KEY")
-os.environ["OPENAI_BASE_URL"] = "https://openrouter.ai/api/v1"
-
+# REMOVED the OPENAI_BASE_URL overrides so litellm can do its job automatically!
 
 # ---------------------------------------------------
 # SYSTEM INSTRUCTION
@@ -45,7 +41,6 @@ RULES
 • Your entire output must begin with the Markdown heading and contain nothing else.
 """
 
-
 # ---------------------------------------------------
 # AGENT DEFINITION
 # ---------------------------------------------------
@@ -55,6 +50,6 @@ root_agent = Agent(
     instruction=SYSTEM_INSTRUCTION,
     tools=[crawl_site, build_documentation],
 
-    # OpenRouter model through OpenAI-compatible API
-    model="nvidia/nemotron-3-super-120b-a12b:free"
+    # In ADK/litellm, you MUST use the openrouter/ prefix so it knows where to route it!
+    model="openrouter/nvidia/nemotron-3-super-120b-a12b:free"
 )
