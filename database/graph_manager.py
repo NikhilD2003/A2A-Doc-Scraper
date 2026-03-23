@@ -70,77 +70,79 @@ class GraphManager:
                 result = session.run(query)
                 return [{"url": r["url"], "content": r["content"]} for r in result]
 
-    # --- THE FIX: CONTEXTUAL URL HIERARCHY ---
+    # --- THE FIX: BFS SPANNING TREE ---
     def get_graph_data(self, target_url: str):
-        # 1. Fetch all scraped nodes
+        # 1. Fetch all Nodes
         nodes_query = """
         MATCH (n:Topic)
         WHERE n.url STARTS WITH $target_url
         RETURN n.url AS id, n.content AS content
         """
 
+        # 2. Fetch all raw Hyperlinks
+        links_query = """
+        MATCH (a:Topic)-[:REFERENCES]->(b:Topic)
+        WHERE a.url STARTS WITH $target_url AND b.url STARTS WITH $target_url
+        RETURN a.url AS source, b.url AS target
+        """
+
         with self.driver.session() as session:
+            # Process Nodes
             nodes_result = session.run(nodes_query, target_url=target_url)
             nodes = []
-            urls = []
+            valid_urls = set()
 
             for record in nodes_result:
                 n_id = record["id"]
-                content = record["content"]
 
-                # Clean up the label for the frontend boxes
+                # Format a clean, readable label
                 label = n_id.rstrip('/').split('/')[-1]
                 label = label.replace('.html', '').replace('.md', '')
                 if not label or n_id == target_url:
                     label = "Documentation Home"
 
-                nodes.append({
-                    "id": n_id,
-                    "label": label,
-                    "content": content
-                })
-                urls.append(n_id)
+                nodes.append({"id": n_id, "label": label, "content": record["content"]})
+                valid_urls.add(n_id)
 
-            # 2. Build Contextual Links based on Folder Structure (Ignoring Hyperlinks)
-            links = []
+            # Ensure the root target URL exists in the dataset
+            root_url = target_url.rstrip('/') + '/'
+            if root_url not in valid_urls and target_url in valid_urls:
+                root_url = target_url
+            elif root_url not in valid_urls:
+                nodes.append({"id": root_url, "label": "Documentation Home", "content": "Root Node"})
+                valid_urls.add(root_url)
 
-            def normalize(u):
-                return u.rstrip('/')
+            # Process Links into an Adjacency List
+            links_result = session.run(links_query, target_url=target_url)
+            adj = {u: [] for u in valid_urls}
 
-            normalized_urls = {normalize(u): u for u in urls}
-            root_norm = normalize(target_url)
+            for record in links_result:
+                src = record["source"]
+                tgt = record["target"]
+                if src in adj and tgt in valid_urls:
+                    adj[src].append(tgt)
 
-            # Ensure the root node exists in our visual map
-            if root_norm not in normalized_urls:
-                normalized_urls[root_norm] = target_url
-                if not any(n["id"] == target_url for n in nodes):
-                    nodes.append({"id": target_url, "label": "Documentation Home", "content": "Root directory."})
+            # 3. Build the clean Spanning Tree (Breadth-First Search)
+            tree_links = []
+            visited = set([root_url])
+            queue = [root_url]
 
-            # Calculate the exact logical parent for every single URL
-            for norm_url, original_url in normalized_urls.items():
-                if norm_url == root_norm:
-                    continue  # The root has no parent
+            while queue:
+                current = queue.pop(0)
+                for neighbor in adj[current]:
+                    # If we haven't seen this page yet, link it to the current page!
+                    # This naturally destroys the circular "Next Steps" links.
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        tree_links.append({"source": current, "target": neighbor})
+                        queue.append(neighbor)
 
-                # Chop off the end of the URL to find its parent folder
-                parent_path = norm_url.rsplit('/', 1)[0]
+            # 4. Fallback: Attach any isolated/orphan pages directly to the root
+            for u in valid_urls:
+                if u not in visited:
+                    tree_links.append({"source": root_url, "target": u})
 
-                found_parent = None
-                # Keep chopping the URL down until we find a parent that actually exists in our scraped data
-                while len(parent_path) >= len(root_norm):
-                    if parent_path in normalized_urls:
-                        found_parent = normalized_urls[parent_path]
-                        break
-                    if '/' not in parent_path:
-                        break
-                    parent_path = parent_path.rsplit('/', 1)[0]
-
-                # Link to the calculated parent, or default to the root Home page
-                if found_parent and found_parent != original_url:
-                    links.append({"source": found_parent, "target": original_url})
-                elif original_url != target_url:
-                    links.append({"source": target_url, "target": original_url})
-
-            return {"nodes": nodes, "links": links}
+            return {"nodes": nodes, "links": tree_links}
 
 
 db = GraphManager()
