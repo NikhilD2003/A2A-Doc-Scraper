@@ -1,5 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Play, Square, Globe, Terminal, Server, MessageSquare, Network, Send, ZoomIn, ZoomOut, Maximize, X, ExternalLink } from 'lucide-react';
+import ForceGraph2D from 'react-force-graph-2d';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 
 export default function App() {
   const [url, setUrl] = useState("https://a2a-protocol.org/latest/");
@@ -16,13 +19,8 @@ export default function App() {
   const [isTyping, setIsTyping] = useState(false);
 
   const [graphData, setGraphData] = useState({ nodes: [], links: [] });
-  // FIX: State for the interactive details sidebar
   const [selectedNode, setSelectedNode] = useState(null);
-
-  const [graphZoom, setGraphZoom] = useState(1);
-  const [graphPan, setGraphPan] = useState({ x: 0, y: 0 });
-  const [isDraggingGraph, setIsDraggingGraph] = useState(false);
-  const [dragStartPos, setDragStartPos] = useState({ x: 0, y: 0 });
+  const graphRef = useRef();
 
   const logsEndRef = useRef(null);
   const chatEndRef = useRef(null);
@@ -91,9 +89,9 @@ export default function App() {
       const res = await fetch(`https://a2a-doc-scraper-api.onrender.com/api/graph?url=${encodeURIComponent(url)}`);
       const data = await res.json();
       setGraphData(data);
-      if (data.nodes.length > 20) setGraphZoom(0.6);
-      else setGraphZoom(1);
-      setGraphPan({ x: 0, y: 0 });
+      if (graphRef.current) {
+        graphRef.current.zoomToFit(400, 50);
+      }
     } catch (err) {
       console.error("Failed to load graph", err);
     }
@@ -138,100 +136,96 @@ export default function App() {
     });
   };
 
+  // --- NEW HIERARCHICAL GRAPH RENDERER ---
   const renderGraph = () => {
     if (!graphData.nodes.length) return null;
 
-    const width = 800;
-    const height = 500;
-    const centerX = width / 2;
-    const centerY = height / 2;
-
-    const dynamicRadius = Math.max(200, graphData.nodes.length * 15);
-
-    const positionedNodes = graphData.nodes.map((node, i) => {
-      const angle = (i / graphData.nodes.length) * 2 * Math.PI;
-      return {
-        ...node,
-        x: centerX + dynamicRadius * Math.cos(angle),
-        y: centerY + dynamicRadius * Math.sin(angle)
-      };
-    });
-
-    const getNodeCoords = (id) => positionedNodes.find(n => n.id === id) || { x: centerX, y: centerY };
-
     return (
-      <div className="relative w-full h-full overflow-hidden flex">
+      <div className="relative w-full h-full flex bg-slate-900">
+
         {/* GRAPH CONTROLS */}
         <div className="absolute top-4 right-4 flex flex-col space-y-2 bg-slate-800 p-2 rounded-lg border border-slate-700 z-10 shadow-lg">
-          <button onClick={() => setGraphZoom(z => Math.min(z + 0.2, 5))} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom In"><ZoomIn size={18}/></button>
-          <button onClick={() => setGraphZoom(z => Math.max(z - 0.2, 0.1))} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom Out"><ZoomOut size={18}/></button>
-          <button onClick={() => { setGraphZoom(graphData.nodes.length > 20 ? 0.6 : 1); setGraphPan({x:0, y:0}); }} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Reset View"><Maximize size={18}/></button>
+          <button onClick={() => graphRef.current?.zoom(graphRef.current.zoom() * 1.2, 400)} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom In"><ZoomIn size={18}/></button>
+          <button onClick={() => graphRef.current?.zoom(graphRef.current.zoom() / 1.2, 400)} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom Out"><ZoomOut size={18}/></button>
+          <button onClick={() => graphRef.current?.zoomToFit(400, 50)} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Reset View"><Maximize size={18}/></button>
         </div>
 
-        {/* SVG GRAPH */}
-        <svg
-          width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} className="flex-1 h-full"
-          onWheel={(e) => {
-            const scaleAmount = -e.deltaY * 0.001;
-            setGraphZoom(z => Math.max(0.1, Math.min(z + scaleAmount, 5)));
-          }}
-          onMouseDown={(e) => {
-            setIsDraggingGraph(true);
-            setDragStartPos({ x: e.clientX - graphPan.x, y: e.clientY - graphPan.y });
-          }}
-          onMouseMove={(e) => {
-            if (!isDraggingGraph) return;
-            setGraphPan({ x: e.clientX - dragStartPos.x, y: e.clientY - dragStartPos.y });
-          }}
-          onMouseUp={() => setIsDraggingGraph(false)}
-          onMouseLeave={() => setIsDraggingGraph(false)}
-          style={{ cursor: isDraggingGraph ? 'grabbing' : 'grab', touchAction: 'none' }}
-        >
-          <g transform={`translate(${graphPan.x}, ${graphPan.y}) translate(${centerX}, ${centerY}) scale(${graphZoom}) translate(-${centerX}, -${centerY})`}>
-            {graphData.links.map((link, i) => {
-              const source = getNodeCoords(link.source);
-              const target = getNodeCoords(link.target);
-              return (
-                <line key={i} x1={source.x} y1={source.y} x2={target.x} y2={target.y} stroke="rgba(148, 163, 184, 0.2)" strokeWidth="1" />
-              );
-            })}
-            {positionedNodes.map((node, i) => (
-              <g key={i} transform={`translate(${node.x}, ${node.y})`}>
-                {/* FIX: Added onClick to circle to select node */}
-                <circle
-                  r="8"
-                  fill={selectedNode?.id === node.id ? "#3b82f6" : "#8b5cf6"}
-                  className="cursor-pointer transition-all hover:r-10 shadow-lg drop-shadow-[0_0_8px_rgba(139,92,246,0.6)]"
-                  onClick={() => setSelectedNode(node)}
-                />
-                <text y="22" fill="#cbd5e1" fontSize="11" fontWeight="500" textAnchor="middle" className="pointer-events-none select-none drop-shadow-md">
-                  {node.id.split('/').filter(Boolean).pop() || node.id}
-                </text>
-              </g>
-            ))}
-          </g>
-        </svg>
+        {/* HIERARCHICAL DAG GRAPH */}
+        <div className="flex-1 w-full h-full overflow-hidden">
+          <ForceGraph2D
+            ref={graphRef}
+            graphData={graphData}
+            dagMode="lr" // 'lr' = Left to Right hierarchy (like an activity diagram)
+            dagLevelDistance={100} // Spacing between parent and child nodes
+            backgroundColor="#0f172a"
 
-        {/* FIX: NODE DETAILS SIDEBAR */}
+            // Link styling (Arrows pointing from Parent to Child)
+            linkColor={() => "rgba(148, 163, 184, 0.4)"}
+            linkDirectionalArrowLength={5}
+            linkDirectionalArrowRelPos={1}
+            linkCurvature={0.2}
+
+            // Node styling
+            nodeRelSize={6}
+            nodeColor={(node) => selectedNode?.id === node.id ? "#3b82f6" : "#8b5cf6"}
+
+            // Node labels
+            nodeCanvasObject={(node, ctx, globalScale) => {
+              const label = node.id.split('/').filter(Boolean).pop() || node.id;
+              const fontSize = 12 / globalScale;
+              ctx.font = `${fontSize}px Sans-Serif`;
+
+              // Draw Node
+              ctx.beginPath();
+              ctx.arc(node.x, node.y, 6, 0, 2 * Math.PI, false);
+              ctx.fillStyle = selectedNode?.id === node.id ? "#3b82f6" : "#8b5cf6";
+              ctx.fill();
+
+              // Draw Text Label
+              ctx.textAlign = 'center';
+              ctx.textBaseline = 'top';
+              ctx.fillStyle = "#cbd5e1";
+              ctx.fillText(label, node.x, node.y + 10);
+            }}
+
+            onNodeClick={(node) => {
+              setSelectedNode(node);
+              graphRef.current.centerAt(node.x, node.y, 1000);
+              graphRef.current.zoom(4, 1000);
+            }}
+          />
+        </div>
+
+        {/* DETAILS SIDEBAR WITH REACT-MARKDOWN */}
         {selectedNode && (
-          <div className="absolute top-0 right-0 w-80 h-full bg-slate-900 border-l border-slate-700 shadow-2xl z-20 flex flex-col animate-in slide-in-from-right duration-300">
+          <div className="absolute top-0 right-0 w-96 h-full bg-slate-900 border-l border-slate-700 shadow-2xl z-20 flex flex-col animate-in slide-in-from-right duration-300">
              <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
                <h3 className="font-bold text-blue-400 truncate pr-2">{selectedNode.label || "Node Details"}</h3>
                <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white transition-colors">
                  <X size={20} />
                </button>
              </div>
-             <div className="flex-1 overflow-y-auto p-4 space-y-4">
+
+             <div className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
                <div>
                  <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Source URL</label>
                  <a href={selectedNode.id} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline flex items-center mt-1 break-all">
                    {selectedNode.id} <ExternalLink size={10} className="ml-1 shrink-0" />
                  </a>
                </div>
+
+               <hr className="border-slate-800" />
+
                <div>
-                 <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Scraped Content</label>
-                 <div className="mt-2 text-sm text-slate-300 leading-relaxed whitespace-pre-wrap font-sans">
-                   {selectedNode.content || "No content extracted for this node."}
+                 <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 block">Scraped Content</label>
+                 <div className="text-sm text-slate-300 leading-relaxed prose prose-invert prose-sm max-w-none prose-pre:bg-slate-800 prose-pre:border prose-pre:border-slate-700 prose-a:text-blue-400">
+                   {selectedNode.content ? (
+                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                       {selectedNode.content}
+                     </ReactMarkdown>
+                   ) : (
+                     <span className="italic text-slate-500">No content extracted for this node.</span>
+                   )}
                  </div>
                </div>
              </div>

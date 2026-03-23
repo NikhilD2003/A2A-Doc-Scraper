@@ -20,7 +20,6 @@ except ModuleNotFoundError:
 
 visited = set()
 
-# --- Real-time Progress Queue & Pipeline State ---
 progress_queue = asyncio.Queue()
 
 
@@ -34,8 +33,6 @@ state = PipelineState()
 async def send_progress(msg: str):
     await progress_queue.put(msg)
 
-
-# ------------------------------------------------------
 
 def normalize_url(url):
     parsed = urlparse(url)
@@ -53,24 +50,42 @@ def get_site_name(url):
     return parts[0]
 
 
+# --- FIX 1: Fetch handles plain text files properly ---
 async def fetch(session, url):
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         async with session.get(url, headers=headers) as resp:
             if resp.status == 200:
-                return await resp.text()
+                content_type = resp.headers.get('Content-Type', '')
+                text_data = await resp.text()
+
+                # If it is a raw text or config file, flag it as text
+                if 'text/plain' in content_type or url.endswith('.txt') or url.endswith('.rst'):
+                    return {"type": "text", "body": text_data}
+
+                # Otherwise, it is HTML
+                return {"type": "html", "body": text_data}
     except:
         pass
     return None
 
 
-def extract_content(html):
+# --- FIX 2: Markdown extraction scrubbed of raw symbols ---
+def extract_content(content_obj):
+    if not content_obj: return ""
+
+    # If the crawler found a text file, format it beautifully and return
+    if content_obj["type"] == "text":
+        text = content_obj["body"]
+        text = text.replace("\\_", "_").replace("¶", "")
+        return f"```text\n{text.strip()}\n```"
+
+    html = content_obj["body"]
     soup = BeautifulSoup(html, "html.parser")
     main = (soup.select_one("article") or soup.select_one("main") or soup.select_one("div.md-content") or soup.body)
     if not main:
         return ""
 
-    # THE FIX: Added "aside" and "form" to destroy sidebars and search boxes!
     for tag in main(["nav", "header", "footer", "script", "style", "svg", "noscript", "iframe", "aside", "form"]):
         tag.decompose()
 
@@ -85,6 +100,11 @@ def extract_content(html):
     text = md(str(main), heading_style="ATX")
     text = text.replace("```xml", "```")
     text = re.sub(r'\n{3,}', '\n\n', text)
+
+    # THE READABILITY FIX: Strip out annoying escape characters and anchor symbols
+    text = text.replace("\\_", "_")
+    text = text.replace("¶", "")
+    text = re.sub(r'\[\s*\]\([^)]+\)', '', text)  # Removes empty/broken links
 
     return text.strip()
 
@@ -135,10 +155,6 @@ def is_in_scope(link, root_url):
     return True
 
 
-# ---------------------------------------------------
-# MAIN CRAWLER
-# ---------------------------------------------------
-
 async def crawl_site(root_url: str, limit: int = 500):
     limit = int(limit)
     root_url = normalize_url(root_url)
@@ -152,68 +168,64 @@ async def crawl_site(root_url: str, limit: int = 500):
             visited.add(url)
             await send_progress(f"🔍 SCRAPING: {url}")
 
-            html = await fetch(session, url)
-            if not html: continue
+            # FIX 3: Fetch now returns an object instead of raw text
+            fetched_data = await fetch(session, url)
+            if not fetched_data: continue
 
-            content = extract_content(html)
+            content = extract_content(fetched_data)
             db.upsert_topic(url, content)
 
-            # Note: Kept the 4-second delay here. Even though OpenRouter doesn't have
-            # Google's strict 15 RPM limit, it prevents us from hammering Neo4j and the target website!
             await asyncio.sleep(4)
 
-            links = extract_links(html, url)
-            valid_targets = []
+            # Extract links only if it was an HTML page
+            if fetched_data["type"] == "html":
+                links = extract_links(fetched_data["body"], url)
+                valid_targets = []
 
-            for link in links:
-                link = normalize_url(link)
+                for link in links:
+                    link = normalize_url(link)
 
-                if not is_in_scope(link, root_url): continue
+                    if not is_in_scope(link, root_url): continue
 
-                parsed_link = urlparse(link)
-                parsed_path = parsed_link.path.lower()
+                    parsed_link = urlparse(link)
+                    parsed_path = parsed_link.path.lower()
 
-                BAD_EXTENSIONS = [
-                    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".zip", ".ico",
-                    ".csv", ".tar", ".gz", ".exe", ".npy", ".iml", ".xml", ".ps1",
-                    ".dll", ".bin", ".pkl", ".h5", ".pt", ".pth", ".tsv"
-                ]
-                if any(parsed_path.endswith(ext) for ext in BAD_EXTENSIONS): continue
-
-                LANG_PREFIXES = ["/de/", "/es/", "/fr/", "/ja/", "/ko/", "/pt/", "/zh/", "/ru/", "/tr/", "/uk/"]
-                if any(parsed_path.startswith(prefix) for prefix in LANG_PREFIXES): continue
-
-                BLOCKED_PATHS = [
-                    "/newsletter", "/blog", "/sponsors", "/fastapi-people", "/apps",
-                    "/branding", "/marketplace", "/admin", "/playground", "/editor",
-                    "/stats", "/essays"
-                ]
-                if any(parsed_path.startswith(p) for p in BLOCKED_PATHS): continue
-
-                if "github.com" in parsed_link.netloc:
-                    if re.search(r'/[a-f0-9]{40}(?:/|$)', parsed_path):
-                        continue
-
-                    gh_noise = [
-                        "commits", "commit", "compare", "branches", "tags",
-                        "pulls", "issues", "network", "stargazers", "watchers",
-                        "forks", "releases", "graphs", "pulse", "security",
-                        "community", "labels", "milestones", "search", "raw", "blame"
+                    BAD_EXTENSIONS = [
+                        ".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".zip", ".ico",
+                        ".csv", ".tar", ".gz", ".exe", ".npy", ".iml", ".xml", ".ps1",
+                        ".dll", ".bin", ".pkl", ".h5", ".pt", ".pth", ".tsv"
                     ]
-                    path_parts = parsed_path.split('/')
-                    if any(noise in path_parts for noise in gh_noise):
-                        continue
+                    if any(parsed_path.endswith(ext) for ext in BAD_EXTENSIONS): continue
 
-                valid_targets.append(link)
-                if link not in visited: queue.append(link)
+                    LANG_PREFIXES = ["/de/", "/es/", "/fr/", "/ja/", "/ko/", "/pt/", "/zh/", "/ru/", "/tr/", "/uk/"]
+                    if any(parsed_path.startswith(prefix) for prefix in LANG_PREFIXES): continue
 
-            if valid_targets:
-                db.link_topics_batch(url, valid_targets)
+                    BLOCKED_PATHS = [
+                        "/newsletter", "/blog", "/sponsors", "/fastapi-people", "/apps",
+                        "/branding", "/marketplace", "/admin", "/playground", "/editor",
+                        "/stats", "/essays"
+                    ]
+                    if any(parsed_path.startswith(p) for p in BLOCKED_PATHS): continue
 
+                    if "github.com" in parsed_link.netloc:
+                        if re.search(r'/[a-f0-9]{40}(?:/|$)', parsed_path):
+                            continue
+                        gh_noise = [
+                            "commits", "commit", "compare", "branches", "tags",
+                            "pulls", "issues", "network", "stargazers", "watchers",
+                            "forks", "releases", "graphs", "pulse", "security",
+                            "community", "labels", "milestones", "search", "raw", "blame"
+                        ]
+                        path_parts = parsed_path.split('/')
+                        if any(noise in path_parts for noise in gh_noise):
+                            continue
 
-# ---------------------------------------------------
-# DOCUMENTATION BUILDER
-# ---------------------------------------------------
+                    valid_targets.append(link)
+                    if link not in visited: queue.append(link)
+
+                if valid_targets:
+                    db.link_topics_batch(url, valid_targets)
+
 
 async def build_documentation(root_url):
     root_url = normalize_url(root_url)
