@@ -73,6 +73,16 @@ class GraphManager:
                 result = session.run(query)
                 return [{"url": r["url"], "content": r["content"]} for r in result]
 
+    # --- NEW: RAW CYPHER EXECUTION FOR THE AI CHATBOT ---
+    def execute_read_query(self, query: str):
+        with self.driver.session() as session:
+            try:
+                # We wrap it in a try-except because LLMs sometimes write bad syntax!
+                result = session.run(query)
+                return [record.data() for record in result]
+            except Exception as e:
+                return [{"error": f"Invalid Cypher Query generated: {str(e)}"}]
+
     # --- THE FIX: STRICT URL FOLDER PARSER WITH SYNTHETIC NODES ---
     def get_graph_data(self, target_url: str):
         nodes_query = """
