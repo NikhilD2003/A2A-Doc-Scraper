@@ -19,7 +19,6 @@ except ModuleNotFoundError:
     from graph_manager import db
 
 visited = set()
-
 progress_queue = asyncio.Queue()
 
 
@@ -50,7 +49,6 @@ def get_site_name(url):
     return parts[0]
 
 
-# --- FIX 1: Fetch handles plain text files properly ---
 async def fetch(session, url):
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
@@ -58,23 +56,16 @@ async def fetch(session, url):
             if resp.status == 200:
                 content_type = resp.headers.get('Content-Type', '')
                 text_data = await resp.text()
-
-                # If it is a raw text or config file, flag it as text
                 if 'text/plain' in content_type or url.endswith('.txt') or url.endswith('.rst'):
                     return {"type": "text", "body": text_data}
-
-                # Otherwise, it is HTML
                 return {"type": "html", "body": text_data}
     except:
         pass
     return None
 
 
-# --- FIX 2: Markdown extraction scrubbed of raw symbols ---
 def extract_content(content_obj):
     if not content_obj: return ""
-
-    # If the crawler found a text file, format it beautifully and return
     if content_obj["type"] == "text":
         text = content_obj["body"]
         text = text.replace("\\_", "_").replace("¶", "")
@@ -88,10 +79,8 @@ def extract_content(content_obj):
 
     for tag in main(["nav", "header", "footer", "script", "style", "svg", "noscript", "iframe", "aside", "form"]):
         tag.decompose()
-
     for menu in main.find_all(class_=["menu", "sidebar", "navigation", "toc"]):
         menu.decompose()
-
     for img in main.find_all("img"):
         img.decompose()
     for xml in main.find_all(string=lambda t: t and "<?xml" in t):
@@ -100,31 +89,38 @@ def extract_content(content_obj):
     text = md(str(main), heading_style="ATX")
     text = text.replace("```xml", "```")
     text = re.sub(r'\n{3,}', '\n\n', text)
-
-    # THE READABILITY FIX: Strip out annoying escape characters and anchor symbols
     text = text.replace("\\_", "_")
     text = text.replace("¶", "")
-    text = re.sub(r'\[\s*\]\([^)]+\)', '', text)  # Removes empty/broken links
+    text = re.sub(r'\[\s*\]\([^)]+\)', '', text)
 
     return text.strip()
 
 
+# --- THE FIX: Clean HTML before extracting links to break circular dependencies! ---
 def extract_links(html, base_url):
     soup = BeautifulSoup(html, "html.parser")
-    links = []
+    main = (soup.select_one("article") or soup.select_one("main") or soup.select_one("div.md-content") or soup.body)
 
+    # Destroy navigation sidebars so we ONLY get contextual, in-text links
+    if main:
+        for tag in main(["nav", "header", "footer", "aside", "form"]):
+            tag.decompose()
+        for menu in main.find_all(class_=["menu", "sidebar", "navigation", "toc"]):
+            menu.decompose()
+        search_area = main
+    else:
+        search_area = soup
+
+    links = []
     if not base_url.endswith('/') and not '.' in base_url.split('/')[-1]:
         base_url += '/'
 
-    for a in soup.find_all("a", href=True):
+    for a in search_area.find_all("a", href=True):
         href = a["href"]
-
         if href.startswith("#") or href.startswith("mailto:") or href.startswith("javascript:"):
             continue
-
         full = urljoin(base_url, href)
         full = full.split('#')[0]
-
         parsed = urlparse(full)
         clean = normalize_url(f"{parsed.scheme}://{parsed.netloc}{parsed.path}")
         links.append(clean)
@@ -135,23 +131,16 @@ def extract_links(html, base_url):
 def is_in_scope(link, root_url):
     parsed_link = urlparse(link)
     parsed_root = urlparse(root_url)
-
     if parsed_link.netloc != parsed_root.netloc:
         return False
-
     root_path = parsed_root.path.rstrip('/')
     if root_path and not parsed_link.path.startswith(root_path):
         return False
-
-    blocked_langs = [
-        '/zh/', '/ko/', '/ja/', '/ru/', '/de/',
-        '/fr/', '/es/', '/pt/', '/tr/', '/vi/', '/ar/', '/zh-hans/'
-    ]
-
+    blocked_langs = ['/zh/', '/ko/', '/ja/', '/ru/', '/de/', '/fr/', '/es/', '/pt/', '/tr/', '/vi/', '/ar/',
+                     '/zh-hans/']
     for lang in blocked_langs:
         if lang in link and lang not in root_url:
             return False
-
     return True
 
 
@@ -168,7 +157,6 @@ async def crawl_site(root_url: str, limit: int = 500):
             visited.add(url)
             await send_progress(f"🔍 SCRAPING: {url}")
 
-            # FIX 3: Fetch now returns an object instead of raw text
             fetched_data = await fetch(session, url)
             if not fetched_data: continue
 
@@ -177,14 +165,12 @@ async def crawl_site(root_url: str, limit: int = 500):
 
             await asyncio.sleep(4)
 
-            # Extract links only if it was an HTML page
             if fetched_data["type"] == "html":
                 links = extract_links(fetched_data["body"], url)
                 valid_targets = []
 
                 for link in links:
                     link = normalize_url(link)
-
                     if not is_in_scope(link, root_url): continue
 
                     parsed_link = urlparse(link)
@@ -229,7 +215,6 @@ async def crawl_site(root_url: str, limit: int = 500):
 
 async def build_documentation(root_url):
     root_url = normalize_url(root_url)
-
     await send_progress("✨ Scrape limit reached! Fetching context from Neo4j...")
     pages = db.get_all_topics(root_url)
 
@@ -244,10 +229,8 @@ async def build_documentation(root_url):
         url = p.get("url", "")
         content = p.get("content") or ""
         content = content.strip()
-
         if not content:
             continue
-
         page_path = urlparse(url).path
         if not page_path or page_path == "/":
             page_path = "Home"
@@ -269,7 +252,5 @@ async def build_documentation(root_url):
 
     final_text = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', fix_anchors, final_text)
     state.final_markdown = final_text
-
     await send_progress("📝 Raw Markdown securely saved to backend memory.")
-
     return "SUCCESS: The document has been saved directly to the system. Reply exactly and only with: 'Process Complete'."

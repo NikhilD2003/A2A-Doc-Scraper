@@ -1,8 +1,54 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Play, Square, Globe, Terminal, Server, MessageSquare, Network, Send, ZoomIn, ZoomOut, Maximize, X, ExternalLink } from 'lucide-react';
-import ForceGraph2D from 'react-force-graph-2d';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { Play, Square, Globe, Terminal, Server, MessageSquare, Network, Send, X, ExternalLink } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+
+// NEW GRAPHING IMPORTS
+import ReactFlow, {
+  Controls,
+  Background,
+  useNodesState,
+  useEdgesState,
+  MarkerType
+} from 'reactflow';
+import 'reactflow/dist/style.css';
+import dagre from 'dagre';
+
+// --- HELPER FUNCTION: AUTO-LAYOUT THE TREE ---
+const getLayoutedElements = (nodes, edges, direction = 'TB') => {
+  const dagreGraph = new dagre.graphlib.Graph();
+  dagreGraph.setDefaultEdgeLabel(() => ({}));
+
+  const nodeWidth = 250;
+  const nodeHeight = 50;
+
+  dagreGraph.setGraph({ rankdir: direction });
+
+  nodes.forEach((node) => {
+    dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
+  });
+
+  edges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target);
+  });
+
+  dagre.layout(dagreGraph);
+
+  nodes.forEach((node) => {
+    const nodeWithPosition = dagreGraph.node(node.id);
+    node.targetPosition = 'top';
+    node.sourcePosition = 'bottom';
+    // Shift the node to its center based on its dimensions
+    node.position = {
+      x: nodeWithPosition.x - nodeWidth / 2,
+      y: nodeWithPosition.y - nodeHeight / 2,
+    };
+    return node;
+  });
+
+  return { nodes, edges };
+};
+
 
 export default function App() {
   const [url, setUrl] = useState("https://a2a-protocol.org/latest/");
@@ -18,24 +64,17 @@ export default function App() {
   const [chatHistory, setChatHistory] = useState([{ role: "system", text: "Documentation ready! Ask me anything about it." }]);
   const [isTyping, setIsTyping] = useState(false);
 
-  const [graphData, setGraphData] = useState({ nodes: [], links: [] });
-  const [selectedNode, setSelectedNode] = useState(null);
-  const graphRef = useRef();
+  const [selectedNodeData, setSelectedNodeData] = useState(null);
 
   const logsEndRef = useRef(null);
   const chatEndRef = useRef(null);
 
+  // React Flow State
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs, activeTab]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatHistory, isTyping, activeTab]);
-
-  // THE FIX: Boost the physics engine to push nodes further apart when graph loads
-  useEffect(() => {
-    if (graphRef.current) {
-      // Negative charge pushes nodes away from each other. Default is -30. Let's blast it to -400.
-      graphRef.current.d3Force('charge').strength(-400);
-      graphRef.current.d3Force('link').distance(80);
-    }
-  }, [graphData, activeTab]);
 
   const startScraping = () => {
     if (!url) return;
@@ -81,7 +120,7 @@ export default function App() {
     };
 
     websocket.onerror = () => {
-      setLogs(prev => [...prev, "❌ Connection Failed! Check if Render server is awake."]);
+      setLogs(prev => [...prev, "❌ Connection Failed! Check if server is awake."]);
       setIsRunning(false);
     };
 
@@ -93,14 +132,59 @@ export default function App() {
 
   const stopScraping = () => { if (ws) ws.close(); };
 
+  // --- FETCH AND FORMAT GRAPH DATA FOR REACT FLOW ---
   const fetchGraphData = async () => {
     try {
       const res = await fetch(`https://a2a-doc-scraper-api.onrender.com/api/graph?url=${encodeURIComponent(url)}`);
       const data = await res.json();
-      setGraphData(data);
-      if (graphRef.current) {
-        graphRef.current.zoomToFit(400, 50);
-      }
+
+      // Transform Backend Data into ReactFlow Format
+      const initialNodes = data.nodes.map((n) => ({
+        id: n.id,
+        data: {
+            // The text shown in the box
+            label: n.id.split('/').filter(Boolean).pop().replace('.html', '') || 'Home',
+            // Store the full content to pass to the sidebar later
+            fullContent: n.content,
+            url: n.id
+        },
+        position: { x: 0, y: 0 },
+        style: {
+            background: '#1e293b',
+            color: '#e2e8f0',
+            border: '1px solid #475569',
+            borderRadius: '8px',
+            padding: '10px',
+            fontSize: '12px',
+            width: 250,
+            textAlign: 'center'
+        }
+      }));
+
+      const initialEdges = data.links.map((l, index) => ({
+        id: `e${index}-${l.source}-${l.target}`,
+        source: l.source,
+        target: l.target,
+        type: 'smoothstep', // Gives those clean right-angle orthogonal lines
+        animated: false,
+        markerEnd: {
+          type: MarkerType.ArrowClosed,
+          width: 20,
+          height: 20,
+          color: '#64748b',
+        },
+        style: { stroke: '#64748b', strokeWidth: 1.5 },
+      }));
+
+      // Apply the auto-layout engine
+      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+        initialNodes,
+        initialEdges
+      );
+
+      setNodes(layoutedNodes);
+      setEdges(layoutedEdges);
+
     } catch (err) {
       console.error("Failed to load graph", err);
     }
@@ -144,101 +228,10 @@ export default function App() {
     });
   };
 
-  const renderGraph = () => {
-    if (!graphData.nodes.length) return null;
-
-    return (
-      <div className="relative w-full h-full flex bg-slate-900">
-        <div className="absolute top-4 right-4 flex flex-col space-y-2 bg-slate-800 p-2 rounded-lg border border-slate-700 z-10 shadow-lg">
-          <button onClick={() => graphRef.current?.zoom(graphRef.current.zoom() * 1.2, 400)} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom In"><ZoomIn size={18}/></button>
-          <button onClick={() => graphRef.current?.zoom(graphRef.current.zoom() / 1.2, 400)} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom Out"><ZoomOut size={18}/></button>
-          <button onClick={() => graphRef.current?.zoomToFit(400, 50)} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Reset View"><Maximize size={18}/></button>
-        </div>
-
-        <div className="flex-1 w-full h-full overflow-hidden">
-          <ForceGraph2D
-            ref={graphRef}
-            graphData={graphData}
-            dagMode="lr"
-            dagLevelDistance={100}
-            backgroundColor="#0f172a"
-            linkColor={() => "rgba(148, 163, 184, 0.4)"}
-            linkDirectionalArrowLength={5}
-            linkDirectionalArrowRelPos={1}
-            linkCurvature={0.2}
-            nodeRelSize={6}
-
-            // THE FIX: Cleanly render readable text with background boxes
-            nodeCanvasObject={(node, ctx, globalScale) => {
-              const label = node.id.split('/').filter(Boolean).pop().replace('.html', '') || node.id;
-              const fontSize = Math.max(12 / globalScale, 4); // Keep font size legible when zoomed out
-              ctx.font = `${fontSize}px Sans-Serif`;
-
-              const textWidth = ctx.measureText(label).width;
-              const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.4);
-
-              // 1. Draw solid dark background pill for the text
-              ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
-              ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y + 12 - bckgDimensions[1] / 2, ...bckgDimensions);
-
-              // 2. Draw Node Circle
-              ctx.beginPath();
-              ctx.arc(node.x, node.y, 6, 0, 2 * Math.PI, false);
-              ctx.fillStyle = selectedNode?.id === node.id ? "#3b82f6" : "#8b5cf6";
-              ctx.fill();
-
-              // 3. Draw Text
-              ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              ctx.fillStyle = selectedNode?.id === node.id ? "#fff" : "#cbd5e1";
-              ctx.fillText(label, node.x, node.y + 12);
-            }}
-
-            onNodeClick={(node) => {
-              setSelectedNode(node);
-              graphRef.current.centerAt(node.x, node.y, 1000);
-              graphRef.current.zoom(4, 1000);
-            }}
-          />
-        </div>
-
-        {selectedNode && (
-          <div className="absolute top-0 right-0 w-96 h-full bg-slate-900 border-l border-slate-700 shadow-2xl z-20 flex flex-col animate-in slide-in-from-right duration-300">
-             <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
-               <h3 className="font-bold text-blue-400 truncate pr-2">{selectedNode.label || "Node Details"}</h3>
-               <button onClick={() => setSelectedNode(null)} className="text-slate-400 hover:text-white transition-colors">
-                 <X size={20} />
-               </button>
-             </div>
-
-             <div className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
-               <div>
-                 <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Source URL</label>
-                 <a href={selectedNode.id} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline flex items-center mt-1 break-all">
-                   {selectedNode.id} <ExternalLink size={10} className="ml-1 shrink-0" />
-                 </a>
-               </div>
-
-               <hr className="border-slate-800" />
-
-               <div>
-                 <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 block">Scraped Content</label>
-                 <div className="text-sm text-slate-300 leading-relaxed prose prose-invert prose-sm max-w-none prose-pre:bg-slate-800 prose-pre:border prose-pre:border-slate-700 prose-a:text-blue-400">
-                   {selectedNode.content ? (
-                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                       {selectedNode.content}
-                     </ReactMarkdown>
-                   ) : (
-                     <span className="italic text-slate-500">No content extracted for this node.</span>
-                   )}
-                 </div>
-               </div>
-             </div>
-          </div>
-        )}
-      </div>
-    );
-  };
+  // Node Click Handler
+  const onNodeClick = useCallback((event, node) => {
+    setSelectedNodeData(node.data);
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-200 p-8 font-sans">
@@ -298,7 +291,8 @@ export default function App() {
           </button>
         </div>
 
-        <div className="bg-black rounded-b-xl rounded-tr-xl border border-slate-800 shadow-2xl overflow-hidden flex flex-col h-[600px]">
+        <div className="bg-black rounded-b-xl rounded-tr-xl border border-slate-800 shadow-2xl overflow-hidden flex flex-col h-[600px] relative">
+
           {activeTab === 'console' && (
             <div className="flex-1 p-4 overflow-y-auto font-mono text-sm space-y-2 min-h-0">
               {logs.length === 0 && <div className="text-slate-600 italic">Ready to start scraping...</div>}
@@ -312,12 +306,24 @@ export default function App() {
             </div>
           )}
 
+          {/* REACT FLOW GRAPH TAB */}
           {activeTab === 'graph' && (
-            <div className="flex-1 relative bg-slate-900 flex items-center justify-center min-h-0">
-              {graphData.nodes.length > 0 ? (
-                renderGraph()
+            <div className="flex-1 w-full h-full bg-[#0f172a]">
+              {nodes.length > 0 ? (
+                <ReactFlow
+                  nodes={nodes}
+                  edges={edges}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onNodeClick={onNodeClick}
+                  fitView
+                  minZoom={0.1}
+                >
+                  <Background color="#334155" gap={20} />
+                  <Controls className="bg-slate-800 fill-slate-400 border-slate-700" />
+                </ReactFlow>
               ) : (
-                <div className="text-slate-500 flex flex-col items-center">
+                <div className="h-full flex flex-col items-center justify-center text-slate-500">
                   <Network className="w-12 h-12 mb-4 opacity-50" />
                   <p>No graph data found for this URL.</p>
                   <p className="text-sm mt-2">Make sure you have scraped it first!</p>
@@ -357,6 +363,43 @@ export default function App() {
               </div>
             </div>
           )}
+
+          {/* SIDEBAR OVERLAY */}
+          {selectedNodeData && activeTab === 'graph' && (
+            <div className="absolute top-0 right-0 w-96 h-full bg-slate-900 border-l border-slate-700 shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-300">
+               <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
+                 <h3 className="font-bold text-blue-400 truncate pr-2">{selectedNodeData.label}</h3>
+                 <button onClick={() => setSelectedNodeData(null)} className="text-slate-400 hover:text-white transition-colors">
+                   <X size={20} />
+                 </button>
+               </div>
+
+               <div className="flex-1 overflow-y-auto p-5 space-y-4 custom-scrollbar">
+                 <div>
+                   <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Source URL</label>
+                   <a href={selectedNodeData.url} target="_blank" rel="noreferrer" className="text-xs text-blue-500 hover:underline flex items-center mt-1 break-all">
+                     {selectedNodeData.url} <ExternalLink size={10} className="ml-1 shrink-0" />
+                   </a>
+                 </div>
+
+                 <hr className="border-slate-800" />
+
+                 <div>
+                   <label className="text-[10px] uppercase tracking-wider text-slate-500 font-bold mb-3 block">Scraped Content</label>
+                   <div className="text-sm text-slate-300 leading-relaxed prose prose-invert prose-sm max-w-none prose-pre:bg-slate-800 prose-pre:border prose-pre:border-slate-700 prose-a:text-blue-400">
+                     {selectedNodeData.fullContent ? (
+                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                         {selectedNodeData.fullContent}
+                       </ReactMarkdown>
+                     ) : (
+                       <span className="italic text-slate-500">No content extracted for this node.</span>
+                     )}
+                   </div>
+                 </div>
+               </div>
+            </div>
+          )}
+
         </div>
       </div>
     </div>
