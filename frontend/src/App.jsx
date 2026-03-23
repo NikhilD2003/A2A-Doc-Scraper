@@ -28,6 +28,15 @@ export default function App() {
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [logs, activeTab]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [chatHistory, isTyping, activeTab]);
 
+  // THE FIX: Boost the physics engine to push nodes further apart when graph loads
+  useEffect(() => {
+    if (graphRef.current) {
+      // Negative charge pushes nodes away from each other. Default is -30. Let's blast it to -400.
+      graphRef.current.d3Force('charge').strength(-400);
+      graphRef.current.d3Force('link').distance(80);
+    }
+  }, [graphData, activeTab]);
+
   const startScraping = () => {
     if (!url) return;
     setIsRunning(true);
@@ -99,7 +108,6 @@ export default function App() {
 
   const sendChatMessage = async () => {
     if (!chatInput.trim()) return;
-
     const userMsg = chatInput;
     setChatHistory(prev => [...prev, { role: "user", text: userMsg }]);
     setChatInput("");
@@ -136,56 +144,54 @@ export default function App() {
     });
   };
 
-  // --- NEW HIERARCHICAL GRAPH RENDERER ---
   const renderGraph = () => {
     if (!graphData.nodes.length) return null;
 
     return (
       <div className="relative w-full h-full flex bg-slate-900">
-
-        {/* GRAPH CONTROLS */}
         <div className="absolute top-4 right-4 flex flex-col space-y-2 bg-slate-800 p-2 rounded-lg border border-slate-700 z-10 shadow-lg">
           <button onClick={() => graphRef.current?.zoom(graphRef.current.zoom() * 1.2, 400)} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom In"><ZoomIn size={18}/></button>
           <button onClick={() => graphRef.current?.zoom(graphRef.current.zoom() / 1.2, 400)} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Zoom Out"><ZoomOut size={18}/></button>
           <button onClick={() => graphRef.current?.zoomToFit(400, 50)} className="p-2 hover:bg-slate-700 hover:text-white rounded text-slate-400 transition-colors" title="Reset View"><Maximize size={18}/></button>
         </div>
 
-        {/* HIERARCHICAL DAG GRAPH */}
         <div className="flex-1 w-full h-full overflow-hidden">
           <ForceGraph2D
             ref={graphRef}
             graphData={graphData}
-            dagMode="lr" // 'lr' = Left to Right hierarchy (like an activity diagram)
-            dagLevelDistance={100} // Spacing between parent and child nodes
+            dagMode="lr"
+            dagLevelDistance={100}
             backgroundColor="#0f172a"
-
-            // Link styling (Arrows pointing from Parent to Child)
             linkColor={() => "rgba(148, 163, 184, 0.4)"}
             linkDirectionalArrowLength={5}
             linkDirectionalArrowRelPos={1}
             linkCurvature={0.2}
-
-            // Node styling
             nodeRelSize={6}
-            nodeColor={(node) => selectedNode?.id === node.id ? "#3b82f6" : "#8b5cf6"}
 
-            // Node labels
+            // THE FIX: Cleanly render readable text with background boxes
             nodeCanvasObject={(node, ctx, globalScale) => {
-              const label = node.id.split('/').filter(Boolean).pop() || node.id;
-              const fontSize = 12 / globalScale;
+              const label = node.id.split('/').filter(Boolean).pop().replace('.html', '') || node.id;
+              const fontSize = Math.max(12 / globalScale, 4); // Keep font size legible when zoomed out
               ctx.font = `${fontSize}px Sans-Serif`;
 
-              // Draw Node
+              const textWidth = ctx.measureText(label).width;
+              const bckgDimensions = [textWidth, fontSize].map(n => n + fontSize * 0.4);
+
+              // 1. Draw solid dark background pill for the text
+              ctx.fillStyle = 'rgba(15, 23, 42, 0.9)';
+              ctx.fillRect(node.x - bckgDimensions[0] / 2, node.y + 12 - bckgDimensions[1] / 2, ...bckgDimensions);
+
+              // 2. Draw Node Circle
               ctx.beginPath();
               ctx.arc(node.x, node.y, 6, 0, 2 * Math.PI, false);
               ctx.fillStyle = selectedNode?.id === node.id ? "#3b82f6" : "#8b5cf6";
               ctx.fill();
 
-              // Draw Text Label
+              // 3. Draw Text
               ctx.textAlign = 'center';
-              ctx.textBaseline = 'top';
-              ctx.fillStyle = "#cbd5e1";
-              ctx.fillText(label, node.x, node.y + 10);
+              ctx.textBaseline = 'middle';
+              ctx.fillStyle = selectedNode?.id === node.id ? "#fff" : "#cbd5e1";
+              ctx.fillText(label, node.x, node.y + 12);
             }}
 
             onNodeClick={(node) => {
@@ -196,7 +202,6 @@ export default function App() {
           />
         </div>
 
-        {/* DETAILS SIDEBAR WITH REACT-MARKDOWN */}
         {selectedNode && (
           <div className="absolute top-0 right-0 w-96 h-full bg-slate-900 border-l border-slate-700 shadow-2xl z-20 flex flex-col animate-in slide-in-from-right duration-300">
              <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
@@ -238,14 +243,11 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-900 text-slate-200 p-8 font-sans">
       <div className="max-w-6xl mx-auto space-y-6">
-
-        {/* HEADER */}
         <div className="flex items-center space-x-3 mb-8">
           <Server className="w-8 h-8 text-blue-400" />
           <h1 className="text-3xl font-bold text-white tracking-tight">A2A Documentation Scraper</h1>
         </div>
 
-        {/* CONFIGURATION PANEL */}
         <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 shadow-xl">
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
             <div className="md:col-span-3 space-y-2">
@@ -284,7 +286,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* TABS NAVIGATION */}
         <div className="flex space-x-2 border-b border-slate-700 pb-2">
           <button onClick={() => setActiveTab('console')} className={`flex items-center px-4 py-2 rounded-t-lg transition-colors ${activeTab === 'console' ? 'bg-slate-800 text-blue-400 border-t border-l border-r border-slate-700' : 'text-slate-500 hover:text-slate-300'}`}>
             <Terminal className="w-4 h-4 mr-2" /> Console Logs
@@ -297,9 +298,7 @@ export default function App() {
           </button>
         </div>
 
-        {/* TAB CONTENT AREAS */}
         <div className="bg-black rounded-b-xl rounded-tr-xl border border-slate-800 shadow-2xl overflow-hidden flex flex-col h-[600px]">
-
           {activeTab === 'console' && (
             <div className="flex-1 p-4 overflow-y-auto font-mono text-sm space-y-2 min-h-0">
               {logs.length === 0 && <div className="text-slate-600 italic">Ready to start scraping...</div>}
@@ -358,7 +357,6 @@ export default function App() {
               </div>
             </div>
           )}
-
         </div>
       </div>
     </div>
