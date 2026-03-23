@@ -5,19 +5,18 @@ from urllib.parse import urlparse
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
-# NEW: Use the native Google GenAI client instead of OpenAI
-from google import genai
-from google.genai import types
-from google.adk.runners import InMemoryRunner
-
 from dotenv import load_dotenv, find_dotenv
+
+# 1. Securely load the .env file
 load_dotenv(find_dotenv())
-print(f"API Key Loaded: {bool(os.getenv('GEMINI_API_KEY'))}")
+
+from google.adk.runners import InMemoryRunner
+from google.genai import types
 
 from remote_a2a.fastapi_scraper.agent import root_agent
 from remote_a2a.fastapi_scraper.tools import progress_queue, state
 
+# Import the graph manager so the API can fetch the Graph and Chat data
 try:
     from database.graph_manager import db
 except ModuleNotFoundError:
@@ -144,32 +143,40 @@ async def chat_with_docs(req: ChatRequest):
 
         context = "\n".join([p["content"] for p in pages if p.get("content")])
 
-        # Native Google GenAI Client
-        client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+        # --- OPENROUTER INTEGRATION ---
+        from openai import AsyncOpenAI
+
+        client = AsyncOpenAI(
+            base_url="https://openrouter.ai/api/v1",
+            api_key=os.getenv("OPENROUTER_API_KEY")
+        )
 
         system_prompt = f"""
         You are a helpful and expert AI assistant for the documentation found at {req.url}.
 
         Instructions:
-        1. GREETINGS & CHAT: If the user says "hello", "hi", "how are you", or asks who you are, respond politely and introduce yourself as the Documentation Assistant for {req.url}. Ask how you can help them with the documentation today.
-        2. DOCUMENTATION QUESTIONS: For technical or specific questions, answer them based STRICTLY on the provided Documentation Context below.
-        3. OFF-TOPIC: If the user asks a specific question and the answer is not in the context, say "I cannot find the answer in the provided documentation." Do not hallucinate outside information.
+        1. GREETINGS & CHAT: Introduce yourself as the Documentation Assistant.
+        2. DOCUMENTATION QUESTIONS: Answer them based STRICTLY on the provided Context below.
+        3. OFF-TOPIC: If the answer isn't in the docs, say "I cannot find the answer in the provided documentation." Do not hallucinate.
 
-        Documentation Context (Truncated to fit):
+        Documentation Context:
         {context[:60000]}
         """
 
-        # Using the async client directly from the Google SDK
-        response = await client.aio.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=req.question,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                temperature=0.2 # Keep it strictly factual for docs
-            )
+        # Exact OpenRouter string, no prefix needed here!
+        response = await client.chat.completions.create(
+            model="nvidia/nemotron-3-nano-30b-a3b:free",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": req.question}
+            ],
+            extra_headers={
+                "HTTP-Referer": "https://a2a-doc-scraper.com",
+                "X-Title": "A2A Doc Scraper",
+            }
         )
 
-        return {"answer": response.text}
+        return {"answer": response.choices[0].message.content}
 
     except Exception as e:
         return {"answer": f"Error communicating with AI: {str(e)}"}
