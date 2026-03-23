@@ -1,12 +1,33 @@
-from google.adk.agents.llm_agent import Agent
-from dotenv import load_dotenv
-from pathlib import Path
 import os
-from dotenv import load_dotenv, find_dotenv
-# Import tools
-load_dotenv(find_dotenv())
+from pathlib import Path
+from dotenv import load_dotenv
+from google.adk.agents.llm_agent import Agent
 
-# Import tools (Must happen after environment is loaded)
+# ---------------------------------------------------
+# THE "LOUD" SECURE LOADER
+# ---------------------------------------------------
+# 1. Get the absolute directory of where agent.py lives
+CURRENT_DIR = Path(__file__).resolve().parent
+
+# 2. Go up to the root folder (Assuming agent.py is in remote_a2a/fastapi_scraper/)
+ROOT_DIR = CURRENT_DIR.parent.parent
+ENV_PATH = ROOT_DIR / ".env"
+
+# 3. Print the exact path to the terminal so we can see it!
+print(f"🔍 DEBUG: Searching for .env file at -> {ENV_PATH}")
+
+# 4. Force load that exact file
+load_dotenv(dotenv_path=ENV_PATH)
+
+# 5. Verify it worked before the ADK even tries to boot up
+if not os.getenv("GEMINI_API_KEY"):
+    print("❌ CRITICAL ERROR: API Key is STILL empty. The .env file is not at the path above!")
+else:
+    print("✅ SUCCESS: API Key loaded securely into agent.py!")
+
+# ---------------------------------------------------
+# IMPORT TOOLS (MUST HAPPEN AFTER ENV IS LOADED)
+# ---------------------------------------------------
 from .tools import crawl_site, build_documentation
 
 # ---------------------------------------------------
@@ -38,6 +59,5 @@ root_agent = Agent(
     name="documentation_builder",
     instruction=SYSTEM_INSTRUCTION,
     tools=[crawl_site, build_documentation],
-    # 100% Native Google Model. No litellm required!
     model="gemini-2.0-flash"
 )
