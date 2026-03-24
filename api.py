@@ -174,7 +174,7 @@ async def chat_with_docs(req: ChatRequest):
         """
 
         cypher_response = await client.chat.completions.create(
-            model="google/gemini-2.0-flash-lite-preview-02-05:free",
+            model="nvidia/nemotron-3-nano-30b-a3b:free",
             messages=[{"role": "user", "content": cypher_prompt}],
             extra_headers={"HTTP-Referer": "https://a2a-doc-scraper.com", "X-Title": "A2A Doc Scraper"}
         )
