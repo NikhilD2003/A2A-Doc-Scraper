@@ -214,7 +214,7 @@ async def chat_with_docs(req: ChatRequest):
         """
 
         final_response = await client.chat.completions.create(
-            model="openai/nvidia/nemotron-3-nano-30b-a3b:free",
+            model="nvidia/nemotron-3-nano-30b-a3b:free",
             messages=[
                 {"role": "system", "content": answer_prompt},
                 {"role": "user", "content": req.question}
