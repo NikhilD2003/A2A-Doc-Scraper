@@ -15,9 +15,9 @@ class GraphManager:
         self.driver = GraphDatabase.driver(
             NEO4J_URI,
             auth=(NEO4J_USER, NEO4J_PASSWORD),
-            keep_alive = True,  # Sends TCP keep-alive pings
-            max_connection_lifetime = 30 * 60,  # Recycles connections after 30 mins
-            max_connection_pool_size = 50
+            keep_alive=True,
+            max_connection_lifetime=30 * 60,
+            max_connection_pool_size=50
         )
 
     def close(self):
@@ -73,17 +73,14 @@ class GraphManager:
                 result = session.run(query)
                 return [{"url": r["url"], "content": r["content"]} for r in result]
 
-    # --- NEW: RAW CYPHER EXECUTION FOR THE AI CHATBOT ---
     def execute_read_query(self, query: str):
         with self.driver.session() as session:
             try:
-                # We wrap it in a try-except because LLMs sometimes write bad syntax!
                 result = session.run(query)
                 return [record.data() for record in result]
             except Exception as e:
                 return [{"error": f"Invalid Cypher Query generated: {str(e)}"}]
 
-    # --- THE FIX: STRICT URL FOLDER PARSER WITH SYNTHETIC NODES ---
     def get_graph_data(self, target_url: str):
         nodes_query = """
         MATCH (n:Topic)
@@ -93,23 +90,18 @@ class GraphManager:
 
         with self.driver.session() as session:
             nodes_result = session.run(nodes_query, target_url=target_url)
-
-            # Normalize target URL (remove trailing slash)
             base_url = target_url.rstrip('/')
 
             all_nodes = {}
             links = set()
 
-            # Helper function to create clean labels
             def create_label(url_string):
                 label = url_string.split('/')[-1]
                 label = label.replace('.html', '').replace('.md', '').replace('.rst', '').replace('.txt', '')
                 if not label or url_string == base_url:
                     return "Home"
-                # Make it pretty (e.g. "a2a-and-mcp" -> "A2a And Mcp")
                 return label.replace('-', ' ').title()
 
-            # Helper function to add a node to our dictionary
             def add_node(url_string, is_scraped=True, content=""):
                 if url_string not in all_nodes:
                     all_nodes[url_string] = {
@@ -121,37 +113,32 @@ class GraphManager:
             # 1. Load all physically scraped nodes
             for record in nodes_result:
                 url = record["id"].rstrip('/')
-                add_node(url, is_scraped=True, content=record["content"])
+                content = record.get("content") or ""
 
-            # Ensure the root node exists
+                # --- THE FIX: Instantly hide blank/useless files from the UI! ---
+                if len(content.strip()) > 15:
+                    add_node(url, is_scraped=True, content=content)
+
             if base_url not in all_nodes:
                 add_node(base_url, is_scraped=False)
 
-            # 2. Build the hierarchy mathematically based on URL slashes
+            # 2. Build the hierarchy mathematically
             for url in list(all_nodes.keys()):
                 if url == base_url:
                     continue
 
                 current_url = url
-                # Work our way backwards up the folder tree until we hit the base URL
                 while current_url != base_url and len(current_url) > len(base_url):
-                    # Chop off the last segment to find the parent folder
-                    # e.g., site.com/latest/topics/a2a -> site.com/latest/topics
                     parent_url = current_url.rsplit('/', 1)[0]
 
-                    # Safety check: don't go higher than the target URL
                     if not parent_url.startswith(base_url):
                         links.add((base_url, url))
                         break
 
-                    # If this folder doesn't exist as a node yet, synthesize it!
                     if parent_url not in all_nodes:
                         add_node(parent_url, is_scraped=False)
 
-                    # Draw the line from the folder to the file
                     links.add((parent_url, current_url))
-
-                    # Move up to the next folder level for the loop
                     current_url = parent_url
 
             formatted_links = [{"source": src, "target": tgt} for src, tgt in links]

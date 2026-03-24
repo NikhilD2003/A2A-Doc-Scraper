@@ -33,7 +33,6 @@ async def send_progress(msg: str):
     await progress_queue.put(msg)
 
 
-# --- THE FIX 1: Bulletproof URL Normalizer ---
 def normalize_url(url):
     if not url.startswith("http"):
         url = "https://" + url
@@ -99,7 +98,6 @@ def extract_content(content_obj):
     return text.strip()
 
 
-# --- THE FINAL FIX: Let crawler see sidebars to find next chapters! ---
 def extract_links(html, base_url):
     soup = BeautifulSoup(html, "html.parser")
     links = []
@@ -107,7 +105,6 @@ def extract_links(html, base_url):
     if not base_url.endswith('/') and not '.' in base_url.split('/')[-1]:
         base_url += '/'
 
-    # Allow the crawler to look at the whole page (including sidebars) for links
     for a in soup.find_all("a", href=True):
         href = a["href"]
         if href.startswith("#") or href.startswith("mailto:") or href.startswith("javascript:"):
@@ -154,7 +151,10 @@ async def crawl_site(root_url: str, limit: int = 500):
             if not fetched_data: continue
 
             content = extract_content(fetched_data)
-            db.upsert_topic(url, content)
+
+            # --- THE FIX: Only save the page if it actually has readable content! ---
+            if content and len(content.strip()) > 15:
+                db.upsert_topic(url, content)
 
             await asyncio.sleep(4)
 
@@ -211,13 +211,10 @@ async def build_documentation(root_url):
     await send_progress("✨ Scrape limit reached! Fetching context from Neo4j...")
     pages = db.get_all_topics(root_url)
 
-    # --- THE FIX 2: LLM Hallucination Safeguard ---
-    # If the LLM passed a bad URL and Neo4j found nothing, just grab EVERYTHING in the DB.
     if not pages:
         await send_progress("⚠️ Attempting fallback data extraction...")
         pages = db.get_all_topics()
         if pages:
-            # Use the most prominent URL from the DB as the new root
             root_url = pages[0].get("url", root_url)
 
     site_name = get_site_name(root_url)
