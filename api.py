@@ -43,6 +43,11 @@ async def websocket_endpoint(websocket: WebSocket):
         url = config.get("url")
         limit = config.get("limit", 500)
 
+        # --- NEW: TRIGGER THE WIPE BEFORE SCRAPING ---
+        await websocket.send_text("🧹 Wiping previous Knowledge Graph from Neo4j...")
+        db.clear_database()
+        # ----------------------------------------------
+
         await websocket.send_text(f"🚀 Starting A2A pipeline for: {url} (Limit: {limit} pages)")
 
         async def queue_reader():
@@ -148,7 +153,6 @@ async def chat_with_docs(req: ChatRequest):
         # ==========================================
         # STAGE 1: TEXT-TO-CYPHER GENERATION
         # ==========================================
-        # --- THE FIX: Smarter URL-aware Cypher Prompt ---
         cypher_prompt = f"""
         You are an expert Neo4j Database Engineer.
         Your task is to convert the user's question into a Cypher query to search a documentation database.
@@ -170,51 +174,47 @@ async def chat_with_docs(req: ChatRequest):
         """
 
         cypher_response = await client.chat.completions.create(
-            model="nvidia/nemotron-3-nano-30b-a3b:free",
+            model="google/gemini-2.0-flash-lite-preview-02-05:free",
             messages=[{"role": "user", "content": cypher_prompt}],
             extra_headers={"HTTP-Referer": "https://a2a-doc-scraper.com", "X-Title": "A2A Doc Scraper"}
         )
 
-        # Clean the generated query just in case the LLM ignored rule #6
         raw_cypher = cypher_response.choices[0].message.content.strip()
         raw_cypher = raw_cypher.replace("```cypher", "").replace("```", "").strip()
 
-        # Log it to the server console so you can see what the LLM is writing!
         print(f"🤖 Generated Cypher: {raw_cypher}")
 
         # ==========================================
         # STAGE 2: DATABASE EXECUTION
         # ==========================================
         db_results = db.execute_read_query(raw_cypher)
-
-        # Convert the database dictionary results into a string for the next LLM
         retrieved_context = json.dumps(db_results, indent=2)
 
         # ==========================================
         # STAGE 3: FINAL ANSWER GENERATION
         # ==========================================
         answer_prompt = f"""
-            You are a friendly, expert AI documentation assistant for {req.url}.
+        You are a friendly, expert AI documentation assistant for {req.url}.
 
-            Instructions:
-            1. TONE & GREETING: Always start with a warm, friendly greeting (e.g., "Hello!", "Hi there!", or "I can definitely help with that!"). Speak naturally and conversationally, acting as a helpful guide.
-            2. ANSWERING: After your greeting, answer the user's question based STRICTLY on the Database Results provided below. Keep the technical explanation precise and easy to understand.
-            3. FALLBACK: If the Database Results contain an error or are empty, politely state: "I couldn't find the exact answer in the database." Do not hallucinate or guess.
-    
-            CRITICAL FORMATTING RULES:
-                - You MUST use beautiful, strict GitHub Flavored Markdown (GFM).
-                - TABLES: ALWAYS leave a blank empty line before AND after any table. 
-                - LISTS: Use bullet points heavily to break up chunky text. Always leave a blank line before starting a list.
-                - SPACING: Use blank lines to separate all paragraphs. Never output giant walls of text.
-                - HIGHLIGHTING: Use `inline code blocks` for technical terms, variable names, or specific states (like `working`).
-                - BOLDING: Bold **key concepts** and **headers** for scannability.
+        Instructions:
+        1. TONE & GREETING: Always start with a warm, friendly greeting (e.g., "Hello!", "Hi there!", or "I can definitely help with that!"). Speak naturally and conversationally, acting as a helpful guide.
+        2. ANSWERING: After your greeting, answer the user's question based STRICTLY on the Database Results provided below. Keep the technical explanation precise and easy to understand.
+        3. FALLBACK: If the Database Results contain an error or are empty, politely state: "I couldn't find the exact answer in the database." Do not hallucinate or guess.
+
+        CRITICAL FORMATTING RULES:
+        - You MUST use beautiful, strict GitHub Flavored Markdown (GFM).
+        - TABLES: ALWAYS leave a blank empty line before AND after any table. 
+        - LISTS: Use bullet points heavily to break up chunky text. Always leave a blank line before starting a list.
+        - SPACING: Use blank lines to separate all paragraphs. Never output giant walls of text.
+        - HIGHLIGHTING: Use `inline code blocks` for technical terms, variable names, or specific states (like `working`).
+        - BOLDING: Bold **key concepts** and **headers** for scannability.
 
         Database Results:
         {retrieved_context}
         """
 
         final_response = await client.chat.completions.create(
-            model="nvidia/nemotron-3-nano-30b-a3b:free",
+            model="google/gemini-2.0-flash-lite-preview-02-05:free",
             messages=[
                 {"role": "system", "content": answer_prompt},
                 {"role": "user", "content": req.question}

@@ -24,6 +24,12 @@ class GraphManager:
         if self.driver:
             self.driver.close()
 
+    # --- NEW: AUTOMATIC CLEAN SLATE PROTOCOL ---
+    def clear_database(self):
+        query = "MATCH (n) DETACH DELETE n"
+        with self.driver.session() as session:
+            session.run(query)
+
     def upsert_topic(self, url, content):
         query = """
         MERGE (t:Topic {url: $url})
@@ -110,19 +116,18 @@ class GraphManager:
                         "content": content if is_scraped else "📁 **Folder Directory**\n\nNo direct content was scraped for this folder, but it contains the child pages linked below."
                     }
 
-            # 1. Load all physically scraped nodes
+            # Load all physically scraped nodes with the 15-character ghost page filter
             for record in nodes_result:
                 url = record["id"].rstrip('/')
                 content = record.get("content") or ""
 
-                # --- THE FIX: Instantly hide blank/useless files from the UI! ---
                 if len(content.strip()) > 15:
                     add_node(url, is_scraped=True, content=content)
 
             if base_url not in all_nodes:
                 add_node(base_url, is_scraped=False)
 
-            # 2. Build the hierarchy mathematically
+            # Build the hierarchy mathematically
             for url in list(all_nodes.keys()):
                 if url == base_url:
                     continue
