@@ -154,24 +154,24 @@ async def chat_with_docs(req: ChatRequest):
         # STAGE 1: TEXT-TO-CYPHER GENERATION
         # ==========================================
         cypher_prompt = f"""
-        You are an expert Neo4j Database Engineer.
-        Your task is to convert the user's question into a Cypher query to search a documentation database.
+            You are an expert Neo4j Database Engineer.
+            Your task is to convert the user's question into a Cypher query to search a documentation database.
 
-        GRAPH SCHEMA:
-        - Node Label: `Topic`
-        - Properties: `url` (String), `content` (String containing markdown text)
+            GRAPH SCHEMA:
+            - Node Label: `Topic`
+            - Properties: `url` (String), `content` (String containing markdown text)
 
-        RULES:
-        1. The target documentation URL is: {req.url}
-        2. ALWAYS filter by `url STARTS WITH '{req.url}'` so you only search this specific website.
-        3. KEYWORD EXTRACTION: Do not search for long phrases. Extract 1 or 2 core keywords. (e.g., "life of a task" -> search for "task" and "life").
-        4. THE SEARCH LOGIC: You must search BOTH the URL and the content using OR logic. 
-           Example: `(toLower(n.content) CONTAINS "life" OR toLower(n.url) CONTAINS "life")`
-        5. LIMIT your results to 3 to avoid overwhelming the context window.
-        6. Return ONLY the raw Cypher query. NO markdown formatting, NO backticks, NO explanations. Just the query.
+            RULES:
+            1. The target documentation URL is: {req.url}
+            2. ALWAYS filter by `url STARTS WITH '{req.url}'` so you only search this specific website.
+            3. KEYWORD EXTRACTION: Be highly specific. If the user asks for "supported environments", search for BOTH "supported" AND "environment" using AND logic to avoid pulling generic pages.
+            4. THE SEARCH LOGIC: You must search BOTH the URL and the content. 
+            Example: `(toLower(n.content) CONTAINS "supported" AND toLower(n.content) CONTAINS "environment")`
+            5. LIMIT your results to 5 to give the answering agent enough context.
+            6. Return ONLY the raw Cypher query. NO markdown formatting, NO backticks, NO explanations. Just the query.
 
-        USER QUESTION: {req.question}
-        """
+            USER QUESTION: {req.question}
+            """
 
         cypher_response = await client.chat.completions.create(
             model="nvidia/nemotron-3-nano-30b-a3b:free",
