@@ -65,28 +65,18 @@ class GraphManager:
             return [{"url": record["url"], "content": record["content"]} for record in result]
 
     def get_graph_data(self, url):
-        """Generates Virtual Directory Nodes by matching the relative path structure."""
+        """Generates Virtual Directory Nodes for the structured hierarchy."""
         if not self.driver: return {"nodes": [], "links": []}
 
-        # 1. 🎯 THE PATH ANCHOR
-        # If user inputs https://a2a-protocol.org/latest/, we extract "/latest"
-        parsed = urlparse(url)
-        path_segments = [p for p in parsed.path.split('/') if p]
+        # 🚀 We know from the Chat logs that the full URL is in the DB.
+        # We just strip the trailing slash to make sure it matches perfectly.
+        clean_url = url.rstrip('/')
 
-        # We look for the first folder (e.g., 'latest')
-        db_anchor = f"/{path_segments[0]}" if path_segments else "/latest"
-
-        print(f"🚀 Searching DB for paths starting with: {db_anchor}")
-
-        # 2. Query Neo4j for anything starting with that path
-        nodes_query = """
-        MATCH (t:Topic) 
-        WHERE t.url STARTS WITH $db_anchor AND t.content IS NOT NULL 
-        RETURN t.url AS id, t.content AS content
-        """
+        # Use the exact same CONTAINS logic that your Chat endpoint uses!
+        nodes_query = "MATCH (t:Topic) WHERE t.url CONTAINS $clean_url AND t.content IS NOT NULL RETURN t.url AS id, t.content AS content"
 
         with self.driver.session() as session:
-            nodes_result = session.run(nodes_query, db_anchor=db_anchor)
+            nodes_result = session.run(nodes_query, clean_url=clean_url)
             real_nodes = [{"id": r["id"], "content": r["content"], "isVirtual": False} for r in nodes_result]
 
             if not real_nodes:
@@ -95,42 +85,36 @@ class GraphManager:
             final_nodes = {n["id"]: n for n in real_nodes}
             final_links = []
 
-            # The root of our tree is the anchor (e.g., "/latest")
-            root_id = db_anchor
-
             for node_id in list(final_nodes.keys()):
-                if node_id == root_id:
-                    continue
+                # Split URL into segments to build the visual folders
+                node_clean = node_id.rstrip('/')
+                parts = node_clean.replace("https://", "").replace("http://", "").split('/')
 
-                # Split path: /latest/sdk/python -> ['', 'latest', 'sdk', 'python']
-                parts = node_id.split('/')
+                if len(parts) > 1:
+                    parent_path = "/".join(node_id.split('/')[:-1])
+                    if parent_path and clean_url in parent_path:
+                        virtual_id = parent_path
+                        if virtual_id not in final_nodes:
+                            folder_name = parts[-2].upper() if len(parts) > 1 else "FOLDER"
+                            final_nodes[virtual_id] = {
+                                "id": virtual_id,
+                                "content": f"### 📁 Directory: {folder_name}",
+                                "isVirtual": True
+                            }
+                        final_links.append({"source": virtual_id, "target": node_id})
 
-                # Logic to link /latest/sdk/python to /latest/sdk
-                if len(parts) > 2:
-                    parent_id = "/".join(parts[:-1])
-                    if not parent_id: parent_id = root_id
+            # Connect orphaned folders/nodes to a central Root node
+            for nid in final_nodes.keys():
+                if nid != clean_url and not any(l["target"] == nid for l in final_links):
+                    final_links.append({"source": clean_url, "target": nid})
 
-                    if parent_id not in final_nodes:
-                        folder_name = parts[-2].upper()
-                        final_nodes[parent_id] = {
-                            "id": parent_id,
-                            "content": f"### 📁 Directory: {folder_name}",
-                            "isVirtual": True
-                        }
-                    final_links.append({"source": parent_id, "target": node_id})
-
-            # Ensure the Root exists in the node list
-            if root_id not in final_nodes:
-                final_nodes[root_id] = {
-                    "id": root_id,
-                    "content": f"### 🌐 Documentation Root: {db_anchor}",
+            # Ensure root exists
+            if clean_url not in final_nodes:
+                final_nodes[clean_url] = {
+                    "id": clean_url,
+                    "content": f"### 🌐 Root: {clean_url}",
                     "isVirtual": True
                 }
-
-            # Connect any top-level pages directly to root
-            for nid in final_nodes.keys():
-                if nid != root_id and not any(l["target"] == nid for l in final_links):
-                    final_links.append({"source": root_id, "target": nid})
 
         return {
             "nodes": list(final_nodes.values()),
