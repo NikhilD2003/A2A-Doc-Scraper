@@ -137,6 +137,10 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/graph?url=${encodeURIComponent(url)}`);
       const data = await res.json();
 
+      // 🚨 THE HIDDEN ERROR REVEALER:
+      console.log("📡 Raw Data from Render:", data);
+      if (!data.nodes || data.nodes.length === 0) alert("Render returned 0 nodes. Check the URL!");
+
       const initialNodes = data.nodes.map((n) => {
         const isFolder = n.isVirtual;
 
