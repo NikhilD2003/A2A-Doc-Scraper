@@ -54,8 +54,9 @@ class GraphManager:
         """RESTORED: Fetches all topics for the Markdown builder."""
         if not self.driver: return []
         if root_url:
-            query = "MATCH (t:Topic) WHERE t.url STARTS WITH $root_url AND t.content IS NOT NULL RETURN t.url AS url, t.content AS content"
-            params = {"root_url": root_url}
+            query = "MATCH (t:Topic) WHERE t.url CONTAINS $root_url AND t.content IS NOT NULL RETURN t.url AS url, t.content AS content"
+            # Strip trailing slash for safer matching
+            params = {"root_url": root_url.rstrip('/')}
         else:
             query = "MATCH (t:Topic) WHERE t.content IS NOT NULL RETURN t.url AS url, t.content AS content"
             params = {}
@@ -68,9 +69,11 @@ class GraphManager:
         """Generates Virtual Directory Nodes for the structured hierarchy."""
         if not self.driver: return {"nodes": [], "links": []}
 
-        # 🚀 We know from the Chat logs that the full URL is in the DB.
-        # We just strip the trailing slash to make sure it matches perfectly.
+        # 🚀 Strip the trailing slash to make sure it matches perfectly.
         clean_url = url.rstrip('/')
+
+        # 🚨 THIS PRINT STATEMENT PROVES RENDER HAS UPDATED YOUR CODE
+        print(f"🚀 [V2] Searching DB using CONTAINS for: {clean_url}")
 
         # Use the exact same CONTAINS logic that your Chat endpoint uses!
         nodes_query = "MATCH (t:Topic) WHERE t.url CONTAINS $clean_url AND t.content IS NOT NULL RETURN t.url AS id, t.content AS content"
@@ -78,6 +81,9 @@ class GraphManager:
         with self.driver.session() as session:
             nodes_result = session.run(nodes_query, clean_url=clean_url)
             real_nodes = [{"id": r["id"], "content": r["content"], "isVirtual": False} for r in nodes_result]
+
+            # 🚨 THIS PROVES IF THE DATABASE ACTUALLY RETURNED DATA
+            print(f"📊 Found {len(real_nodes)} nodes in the database!")
 
             if not real_nodes:
                 return {"nodes": [], "links": []}
@@ -130,10 +136,11 @@ class GraphManager:
     def get_graph_summary(self, root_url):
         """Fetches a high-level map of the graph for the AI's keyword extraction phase."""
         if not self.driver: return ""
-        # 🚀 INCREASED LIMIT: Changed from 50 to 500 to feed the 120B model's massive context window
-        query = "MATCH (t:Topic) WHERE t.url STARTS WITH $root_url RETURN t.url AS url LIMIT 500"
+        # 🚀 FIXED: Changed STARTS WITH to CONTAINS to make it bulletproof like the graph
+        query = "MATCH (t:Topic) WHERE t.url CONTAINS $root_url RETURN t.url AS url LIMIT 500"
         with self.driver.session() as session:
-            result = session.run(query, root_url=root_url)
+            # Strip trailing slash for safer matching
+            result = session.run(query, root_url=root_url.rstrip('/'))
             return ", ".join([r["url"] for r in result])
 
 
