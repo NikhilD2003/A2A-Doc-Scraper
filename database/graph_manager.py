@@ -67,42 +67,67 @@ class GraphManager:
         """Generates Virtual Directory Nodes for the structured hierarchy."""
         if not self.driver: return {"nodes": [], "links": []}
 
-        # 🚀 THE BULLETPROOF FIX: Strip the protocol and trailing slashes
-        clean_url = url.replace("https://", "").replace("http://", "").rstrip('/')
+        # 1. Parse the URL
+        parsed = urlparse(url)
+        domain = parsed.netloc if parsed.netloc else url.replace('https://', '').replace('http://', '').split('/')[0]
 
-        # Now we just check if the URL *contains* the core domain/path
-        nodes_query = "MATCH (t:Topic) WHERE t.url CONTAINS $clean_url AND t.content IS NOT NULL RETURN t.url AS id, t.content AS content"
+        # 2. Extract the first primary folder (e.g., "latest" from "https://a2a.com/latest/")
+        path_parts = [p for p in parsed.path.split('/') if p]
+        primary_folder = f"/{path_parts[0]}" if path_parts else domain.split('.')[0]
+
+        # 3. 🚀 THE FIX: Match the Domain OR the Relative Path Folder
+        nodes_query = """
+        MATCH (t:Topic) 
+        WHERE (t.url CONTAINS $domain OR t.url STARTS WITH $primary_folder OR t.url CONTAINS $primary_folder) 
+          AND t.content IS NOT NULL 
+        RETURN t.url AS id, t.content AS content
+        """
 
         with self.driver.session() as session:
-            nodes_result = session.run(nodes_query, clean_url=clean_url)
+            nodes_result = session.run(nodes_query, domain=domain, primary_folder=primary_folder)
             real_nodes = [{"id": r["id"], "content": r["content"], "isVirtual": False} for r in nodes_result]
 
             final_nodes = {n["id"]: n for n in real_nodes}
             final_links = []
 
+            # The root ID should be the base path (e.g., "/latest") so it matches the DB format
+            root_id = primary_folder if primary_folder.startswith('/') else f"/{primary_folder}"
+
             for node_id in list(final_nodes.keys()):
-                # Split URL into segments to find logical folders
-                node_clean = node_id.rstrip('/')
-                parts = node_clean.replace("https://", "").replace("http://", "").split('/')
+                if node_id == root_id:
+                    continue
 
-                if len(parts) > 1:
-                    parent_path = "/".join(node_id.split('/')[:-1])
-                    # Ensure we don't create virtual nodes outside our target domain
-                    if parent_path and clean_url in parent_path:
-                        virtual_id = parent_path
-                        if virtual_id not in final_nodes:
-                            folder_name = parts[-2] if len(parts) > 1 else "Root"
-                            final_nodes[virtual_id] = {
-                                "id": virtual_id,
-                                "content": f"### 📁 Directory: {folder_name}",
-                                "isVirtual": True
-                            }
-                        final_links.append({"source": virtual_id, "target": node_id})
+                # Split URL by '/' to find logical parent directory
+                parts = node_id.rstrip('/').split('/')
 
-            # Connect orphaned folders/nodes to a central Root node
-            for nid, node in final_nodes.items():
-                if nid != url and not any(l["target"] == nid for l in final_links):
-                    final_links.append({"source": url, "target": nid})
+                # Create tree structure if the URL has paths (e.g., /latest/sdk/python)
+                if len(parts) > 2:
+                    parent_id = "/".join(parts[:-1])
+                    if not parent_id: parent_id = root_id
+
+                    # Create a virtual folder node if it doesn't exist
+                    if parent_id not in final_nodes:
+                        folder_name = parts[-2].upper() if len(parts) > 2 else "ROOT"
+                        final_nodes[parent_id] = {
+                            "id": parent_id,
+                            "content": f"### 📁 Directory: {folder_name}",
+                            "isVirtual": True
+                        }
+
+                    final_links.append({"source": parent_id, "target": node_id})
+
+            # Ensure the root node exists so everything connects
+            if root_id not in final_nodes:
+                final_nodes[root_id] = {
+                    "id": root_id,
+                    "content": f"### 🌐 Root: {domain}",
+                    "isVirtual": True
+                }
+
+            # Connect any floating pages or folders back to the root
+            for nid in final_nodes.keys():
+                if nid != root_id and not any(l["target"] == nid for l in final_links):
+                    final_links.append({"source": root_id, "target": nid})
 
         return {
             "nodes": list(final_nodes.values()),
