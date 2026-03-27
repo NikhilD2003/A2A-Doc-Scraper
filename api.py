@@ -98,7 +98,6 @@ async def chat_with_docs(req: ChatRequest):
         # 2. 🚨 THE SAFETY NET: Upgraded for better acronym capture
         if not keywords or len(keywords) == 0:
             print("⚠️ AI returned empty keywords. Falling back to raw question extraction...")
-            # Capture words 3 letters or longer, including numbers/hyphens
             fallback_words = re.findall(r'\b[a-zA-Z0-9-]{3,}\b', req.question)
 
             banned_words = {
@@ -218,7 +217,7 @@ async def websocket_scraper(websocket: WebSocket):
                 msg = await progress_queue.get()
                 await websocket.send_text(msg)
                 progress_queue.task_done()
-        except asyncio.CancelledError:
+        except Exception:
             pass
 
     log_task = asyncio.create_task(log_reader())
@@ -227,6 +226,17 @@ async def websocket_scraper(websocket: WebSocket):
         data = await websocket.receive_text()
         payload = json.loads(data)
         url = payload.get("url")
+
+        # 🚀 Send a "Keep-Alive" ping every 20 seconds to prevent Render timeout
+        async def keep_alive():
+            try:
+                while True:
+                    await asyncio.sleep(20)
+                    await websocket.send_text("📡 Still processing... keeping cloud connection alive.")
+            except:
+                pass
+
+        ping_task = asyncio.create_task(keep_alive())
 
         await websocket.send_text(f"🚀 Initializing ADK Agent Runner for: {url}")
 
@@ -252,17 +262,26 @@ async def websocket_scraper(websocket: WebSocket):
         ):
             pass
 
+        ping_task.cancel()  # Stop the pings once agent finishes
+
+        # 🚀 FORCED FETCH: Get the result directly from state
         result_text = state.final_markdown
         if not result_text:
-            result_text = "# Error\nNo Markdown was generated. Check backend logs."
+            # Fallback: Fetch everything manually if the agent failed to set final_markdown
+            print("⚠️ Agent didn't set final_markdown. Fetching manually...")
+            all_topics = db.get_all_topics(url)
+            result_text = "\n\n---\n\n".join([f"## 📄 Source: {t['url']}\n\n{t['content']}" for t in all_topics])
 
-        site_name = url.split("://")[-1].split("/")[0]
-        download_payload = {
-            "type": "download",
-            "filename": f"{site_name}_docs.md",
-            "content": result_text
-        }
-        await websocket.send_text(json.dumps(download_payload))
+        if result_text:
+            site_name = url.split("://")[-1].split("/")[0]
+            download_payload = {
+                "type": "download",
+                "filename": f"{site_name}_docs.md",
+                "content": result_text
+            }
+            await websocket.send_text(json.dumps(download_payload))
+            print("✅ File payload sent to frontend.")
+
         await websocket.send_text("DONE")
 
     except WebSocketDisconnect:
@@ -270,6 +289,7 @@ async def websocket_scraper(websocket: WebSocket):
     except Exception as e:
         await websocket.send_text(f"❌ Pipeline Error: {str(e)}")
         print(f"Error: {str(e)}")
+        await websocket.send_text("DONE")  # Still release the UI
     finally:
         log_task.cancel()
 
@@ -277,9 +297,12 @@ async def websocket_scraper(websocket: WebSocket):
 # ==========================================
 # 🕸️ KNOWLEDGE GRAPH ENDPOINT
 # ==========================================
-@app.get("/api/graph")
+@app.get("/")
 async def health_check():
     return {"status": "awake", "message": "A2A Scraper Backend is live!"}
+
+
+@app.get("/api/graph")
 async def get_graph(url: str):
     try:
         graph_data = db.get_graph_data(url)

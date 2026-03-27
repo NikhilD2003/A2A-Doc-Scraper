@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Play, Square, Globe, Terminal, Server, MessageSquare, Network, Send, X, ExternalLink } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -48,7 +48,6 @@ const getLayoutedElements = (nodes, edges, direction = 'TB') => {
   return { nodes, edges };
 };
 
-
 export default function App() {
   // 🚀 DEPLOYMENT CONFIG: Use Cloud URL if deployed, otherwise fallback to localhost
   const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
@@ -92,29 +91,38 @@ export default function App() {
 
     websocket.onmessage = async (event) => {
       const msg = event.data;
-      if (msg === "DONE") {
-        setIsRunning(false);
-        websocket.close();
-        fetchGraphData();
-        return;
-      }
 
-      try {
-        if (msg.startsWith("{")) {
+      // 🚀 Handle the download payload first
+      if (msg.startsWith("{")) {
+        try {
           const data = JSON.parse(msg);
           if (data.type === "download") {
+            setLogs(prev => [...prev, "💾 Processing download..."]);
             const blob = new Blob([data.content], { type: 'text/markdown' });
             const downloadUrl = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = downloadUrl;
             a.download = data.filename;
+            document.body.appendChild(a); // Append to body for Firefox support
             a.click();
+            document.body.removeChild(a);
             URL.revokeObjectURL(downloadUrl);
-            setLogs(prev => [...prev, "✅ SUCCESS! File downloaded."]);
+            setLogs(prev => [...prev, "✅ SUCCESS! File saved to your computer."]);
             return;
           }
+        } catch (e) {
+          console.error("JSON Parse Error", e);
         }
-      } catch (e) {}
+      }
+
+      if (msg === "DONE") {
+        setIsRunning(false);
+        websocket.close();
+        // Give the DB a second to settle before fetching graph
+        setTimeout(() => fetchGraphData(), 1500);
+        return;
+      }
+
       setLogs(prev => [...prev, msg]);
     };
 
@@ -137,9 +145,7 @@ export default function App() {
       const res = await fetch(`${API_BASE}/api/graph?url=${encodeURIComponent(url)}`);
       const data = await res.json();
 
-      // 🚨 THE HIDDEN ERROR REVEALER:
       console.log("📡 Raw Data from Render:", data);
-      if (!data.nodes || data.nodes.length === 0) alert("Render returned 0 nodes. Check the URL!");
 
       const initialNodes = data.nodes.map((n) => {
         const isFolder = n.isVirtual;
@@ -221,6 +227,7 @@ export default function App() {
     if (log.includes('✅') || log.includes('SUCCESS')) return <span className="text-green-400">{log}</span>;
     if (log.includes('❌') || log.includes('Failed')) return <span className="text-red-400">{log}</span>;
     if (log.includes('✨') || log.includes('🚀')) return <span className="text-purple-400 font-bold">{log}</span>;
+    if (log.includes('📡')) return <span className="text-yellow-400">{log}</span>; // Keep-alive ping style
     return <span className="text-slate-400">{log}</span>;
   };
 
