@@ -278,6 +278,8 @@ async def websocket_scraper(websocket: WebSocket):
 # 🕸️ KNOWLEDGE GRAPH ENDPOINT
 # ==========================================
 @app.get("/api/graph")
+async def health_check():
+    return {"status": "awake", "message": "A2A Scraper Backend is live!"}
 async def get_graph(url: str):
     try:
         graph_data = db.get_graph_data(url)
