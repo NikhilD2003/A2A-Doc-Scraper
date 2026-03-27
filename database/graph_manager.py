@@ -67,22 +67,28 @@ class GraphManager:
         """Generates Virtual Directory Nodes for the structured hierarchy."""
         if not self.driver: return {"nodes": [], "links": []}
 
-        nodes_query = "MATCH (t:Topic) WHERE t.url STARTS WITH $url AND t.content IS NOT NULL RETURN t.url AS id, t.content AS content"
+        # 🚀 THE BULLETPROOF FIX: Strip the protocol and trailing slashes
+        clean_url = url.replace("https://", "").replace("http://", "").rstrip('/')
+
+        # Now we just check if the URL *contains* the core domain/path
+        nodes_query = "MATCH (t:Topic) WHERE t.url CONTAINS $clean_url AND t.content IS NOT NULL RETURN t.url AS id, t.content AS content"
 
         with self.driver.session() as session:
-            nodes_result = session.run(nodes_query, url=url)
+            nodes_result = session.run(nodes_query, clean_url=clean_url)
             real_nodes = [{"id": r["id"], "content": r["content"], "isVirtual": False} for r in nodes_result]
 
             final_nodes = {n["id"]: n for n in real_nodes}
             final_links = []
 
             for node_id in list(final_nodes.keys()):
-                clean_url = node_id.rstrip('/')
-                parts = clean_url.replace("https://", "").replace("http://", "").split('/')
+                # Split URL into segments to find logical folders
+                node_clean = node_id.rstrip('/')
+                parts = node_clean.replace("https://", "").replace("http://", "").split('/')
 
                 if len(parts) > 1:
                     parent_path = "/".join(node_id.split('/')[:-1])
-                    if parent_path and parent_path.startswith(url.rstrip('/')):
+                    # Ensure we don't create virtual nodes outside our target domain
+                    if parent_path and clean_url in parent_path:
                         virtual_id = parent_path
                         if virtual_id not in final_nodes:
                             folder_name = parts[-2] if len(parts) > 1 else "Root"
@@ -93,12 +99,15 @@ class GraphManager:
                             }
                         final_links.append({"source": virtual_id, "target": node_id})
 
-            root_url = url.rstrip('/')
+            # Connect orphaned folders/nodes to a central Root node
             for nid, node in final_nodes.items():
-                if nid != root_url and not any(l["target"] == nid for l in final_links):
-                    final_links.append({"source": root_url, "target": nid})
+                if nid != url and not any(l["target"] == nid for l in final_links):
+                    final_links.append({"source": url, "target": nid})
 
-        return {"nodes": list(final_nodes.values()), "links": final_links}
+        return {
+            "nodes": list(final_nodes.values()),
+            "links": final_links
+        }
 
     def execute_read_query(self, query):
         if not self.driver: return []
@@ -107,8 +116,10 @@ class GraphManager:
             return [dict(record) for record in result]
 
     def get_graph_summary(self, root_url):
+        """Fetches a high-level map of the graph for the AI's keyword extraction phase."""
         if not self.driver: return ""
-        query = "MATCH (t:Topic) WHERE t.url STARTS WITH $root_url RETURN t.url AS url LIMIT 50"
+        # 🚀 INCREASED LIMIT: Changed from 50 to 500 to feed the 120B model's massive context window
+        query = "MATCH (t:Topic) WHERE t.url STARTS WITH $root_url RETURN t.url AS url LIMIT 500"
         with self.driver.session() as session:
             result = session.run(query, root_url=root_url)
             return ", ".join([r["url"] for r in result])
