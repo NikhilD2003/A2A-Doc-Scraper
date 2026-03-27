@@ -64,67 +64,81 @@ class GraphManager:
             return [{"url": record["url"], "content": record["content"]} for record in result]
 
     def get_graph_data(self, url):
-        """Generates Virtual Directory Nodes for the structured hierarchy."""
-        if not self.driver: return {"nodes": [], "links": []}
+        """Generates Virtual Directory Nodes for the structured hierarchy with X-Ray Diagnostics."""
+        if not self.driver:
+            print("❌ GraphManager: No driver connected!")
+            return {"nodes": [], "links": []}
 
-        # 1. Parse the URL
-        parsed = urlparse(url)
-        domain = parsed.netloc if parsed.netloc else url.replace('https://', '').replace('http://', '').split('/')[0]
+        print(f"\n--- 🌐 FETCHING GRAPH DATA FOR: {url} ---")
 
-        # 2. Extract the first primary folder (e.g., "latest" from "https://a2a.com/latest/")
-        path_parts = [p for p in parsed.path.split('/') if p]
-        primary_folder = f"/{path_parts[0]}" if path_parts else domain.split('.')[0]
-
-        # 3. 🚀 THE FIX: Match the Domain OR the Relative Path Folder
-        nodes_query = """
-        MATCH (t:Topic) 
-        WHERE (t.url CONTAINS $domain OR t.url STARTS WITH $primary_folder OR t.url CONTAINS $primary_folder) 
-          AND t.content IS NOT NULL 
-        RETURN t.url AS id, t.content AS content
-        """
+        # 1. 🚀 THE X-RAY GRAB: Fetch everything just to see what's actually in the database!
+        # (We only grab a tiny snippet of content here to avoid crashing memory)
+        nodes_query = "MATCH (t:Topic) RETURN t.url AS id, substring(t.content, 0, 10) AS snippet"
 
         with self.driver.session() as session:
-            nodes_result = session.run(nodes_query, domain=domain, primary_folder=primary_folder)
-            real_nodes = [{"id": r["id"], "content": r["content"], "isVirtual": False} for r in nodes_result]
+            nodes_result = session.run(nodes_query)
+            all_nodes = [{"id": r["id"]} for r in nodes_result]
 
-            final_nodes = {n["id"]: n for n in real_nodes}
+            print(f"📊 Total Topics in Cloud Database: {len(all_nodes)}")
+            if len(all_nodes) == 0:
+                print("⚠️ THE DATABASE IS COMPLETELY EMPTY! You must run the scraper first.")
+                return {"nodes": [], "links": []}
+
+            print(f"🔍 Sample URL physically stored in DB: '{all_nodes[0]['id']}'")
+
+            # 2. Super Forgiving Python Filter (Ignores slashes, http, and subdomains)
+            clean_search = url.replace("https://", "").replace("http://", "").replace("www.", "").strip('/')
+            fallback_search = clean_search.split('.')[0] if '.' in clean_search else clean_search
+
+            matched_urls = []
+            for n in all_nodes:
+                # If "a2a-protocol" is ANYWHERE in the database ID, we keep it.
+                if clean_search in n["id"] or fallback_search in n["id"]:
+                    matched_urls.append(n["id"])
+
+            print(f"🎯 Nodes successfully matched for graph: {len(matched_urls)}")
+
+            if not matched_urls:
+                return {"nodes": [], "links": []}
+
+            # 3. Now fetch the full content ONLY for the matched nodes
+            full_content_query = "MATCH (t:Topic) WHERE t.url IN $urls RETURN t.url AS id, t.content AS content"
+            full_result = session.run(full_content_query, urls=matched_urls)
+
+            final_nodes = {r["id"]: {"id": r["id"], "content": r["content"], "isVirtual": False} for r in full_result}
             final_links = []
 
-            # The root ID should be the base path (e.g., "/latest") so it matches the DB format
-            root_id = primary_folder if primary_folder.startswith('/') else f"/{primary_folder}"
+            root_id = url.rstrip('/')
 
+            # 4. Build the Folder Tree
             for node_id in list(final_nodes.keys()):
                 if node_id == root_id:
                     continue
 
-                # Split URL by '/' to find logical parent directory
-                parts = node_id.rstrip('/').split('/')
+                parts = node_id.replace("https://", "").replace("http://", "").rstrip('/').split('/')
 
-                # Create tree structure if the URL has paths (e.g., /latest/sdk/python)
-                if len(parts) > 2:
-                    parent_id = "/".join(parts[:-1])
-                    if not parent_id: parent_id = root_id
+                if len(parts) > 1:
+                    # Group by the parent directory
+                    parent_id = "/".join(node_id.split('/')[:-1])
 
-                    # Create a virtual folder node if it doesn't exist
                     if parent_id not in final_nodes:
-                        folder_name = parts[-2].upper() if len(parts) > 2 else "ROOT"
+                        folder_name = parts[-2].upper() if len(parts) > 1 else "FOLDER"
                         final_nodes[parent_id] = {
                             "id": parent_id,
                             "content": f"### 📁 Directory: {folder_name}",
                             "isVirtual": True
                         }
-
                     final_links.append({"source": parent_id, "target": node_id})
 
-            # Ensure the root node exists so everything connects
+            # Ensure Root exists
             if root_id not in final_nodes:
                 final_nodes[root_id] = {
                     "id": root_id,
-                    "content": f"### 🌐 Root: {domain}",
+                    "content": f"### 🌐 Root: {url}",
                     "isVirtual": True
                 }
 
-            # Connect any floating pages or folders back to the root
+            # Connect orphans
             for nid in final_nodes.keys():
                 if nid != root_id and not any(l["target"] == nid for l in final_links):
                     final_links.append({"source": root_id, "target": nid})
