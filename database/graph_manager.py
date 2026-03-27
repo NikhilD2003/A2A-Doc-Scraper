@@ -1,157 +1,124 @@
 import os
 from neo4j import GraphDatabase
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 
-load_dotenv()
-
-NEO4J_URI = os.getenv("NEO4J_URI")
-NEO4J_USER = os.getenv("NEO4J_USER")
-NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD")
+# 🚨 Hunt for the .env file
+load_dotenv(find_dotenv())
 
 
 class GraphManager:
-
-    def __init__(self):
-        self.driver = GraphDatabase.driver(
-            NEO4J_URI,
-            auth=(NEO4J_USER, NEO4J_PASSWORD),
-            keep_alive=True,
-            max_connection_lifetime=30 * 60,
-            max_connection_pool_size=50
-        )
+    def __init__(self, uri, user, password):
+        try:
+            self.driver = GraphDatabase.driver(uri, auth=(user, password))
+            self.driver.verify_connectivity()
+            print("✅ Successfully connected to Neo4j Database.")
+        except Exception as e:
+            print(f"❌ Failed to connect to Neo4j: {e}")
+            self.driver = None
 
     def close(self):
         if self.driver:
             self.driver.close()
 
-    # --- NEW: AUTOMATIC CLEAN SLATE PROTOCOL ---
     def clear_database(self):
-        query = "MATCH (n) DETACH DELETE n"
+        """Wipes the entire database clean."""
+        if not self.driver: return
         with self.driver.session() as session:
-            session.run(query)
+            session.run("MATCH (n) DETACH DELETE n")
 
     def upsert_topic(self, url, content):
+        """Creates or updates a real Topic node."""
+        if not self.driver: return
+        name = url.split('/')[-1] or url.split('/')[-2] or "Home"
         query = """
         MERGE (t:Topic {url: $url})
-        SET t.content = $content
+        SET t.content = $content, t.name = $name, t.isVirtual = false
         """
         with self.driver.session() as session:
-            session.run(query, url=url, content=content)
+            session.run(query, url=url, content=content, name=name)
 
-    def link_topics(self, source, target):
+    def link_topics_batch(self, source_url, target_urls):
+        """Standard linking for scraper reference."""
+        if not self.driver: return
         query = """
-        MERGE (a:Topic {url: $source})
-        MERGE (b:Topic {url: $target})
-        MERGE (a)-[:REFERENCES]->(b)
+        MATCH (source:Topic {url: $source_url})
+        UNWIND $target_urls AS target_url
+        MERGE (target:Topic {url: target_url})
+        MERGE (source)-[:LINKS_TO]->(target)
         """
         with self.driver.session() as session:
-            session.run(query, source=source, target=target)
+            session.run(query, source_url=source_url, target_urls=target_urls)
 
-    def link_topics_batch(self, source, targets):
-        if not targets:
-            return
-        query = """
-        MERGE (a:Topic {url: $source})
-        WITH a
-        UNWIND $targets AS target
-        MERGE (b:Topic {url: target})
-        MERGE (a)-[:REFERENCES]->(b)
-        """
-        with self.driver.session() as session:
-            session.run(query, source=source, targets=targets)
-
-    def get_all_topics(self, target_url=None):
-        if target_url:
-            query = """
-            MATCH (t:Topic)
-            WHERE t.url STARTS WITH $target_url
-            RETURN t.url AS url, t.content AS content
-            """
-            with self.driver.session() as session:
-                result = session.run(query, target_url=target_url)
-                return [{"url": r["url"], "content": r["content"]} for r in result]
+    def get_all_topics(self, root_url=None):
+        """RESTORED: Fetches all topics for the Markdown builder."""
+        if not self.driver: return []
+        if root_url:
+            query = "MATCH (t:Topic) WHERE t.url STARTS WITH $root_url AND t.content IS NOT NULL RETURN t.url AS url, t.content AS content"
+            params = {"root_url": root_url}
         else:
-            query = """
-            MATCH (t:Topic)
-            RETURN t.url AS url, t.content AS content
-            """
-            with self.driver.session() as session:
-                result = session.run(query)
-                return [{"url": r["url"], "content": r["content"]} for r in result]
-
-    def execute_read_query(self, query: str):
-        with self.driver.session() as session:
-            try:
-                result = session.run(query)
-                return [record.data() for record in result]
-            except Exception as e:
-                return [{"error": f"Invalid Cypher Query generated: {str(e)}"}]
-
-    def get_graph_data(self, target_url: str):
-        nodes_query = """
-        MATCH (n:Topic)
-        WHERE n.url STARTS WITH $target_url
-        RETURN n.url AS id, n.content AS content
-        """
+            query = "MATCH (t:Topic) WHERE t.content IS NOT NULL RETURN t.url AS url, t.content AS content"
+            params = {}
 
         with self.driver.session() as session:
-            nodes_result = session.run(nodes_query, target_url=target_url)
-            base_url = target_url.rstrip('/')
+            result = session.run(query, params)
+            return [{"url": record["url"], "content": record["content"]} for record in result]
 
-            all_nodes = {}
-            links = set()
+    def get_graph_data(self, url):
+        """Generates Virtual Directory Nodes for the structured hierarchy."""
+        if not self.driver: return {"nodes": [], "links": []}
 
-            def create_label(url_string):
-                label = url_string.split('/')[-1]
-                label = label.replace('.html', '').replace('.md', '').replace('.rst', '').replace('.txt', '')
-                if not label or url_string == base_url:
-                    return "Home"
-                return label.replace('-', ' ').title()
+        nodes_query = "MATCH (t:Topic) WHERE t.url STARTS WITH $url AND t.content IS NOT NULL RETURN t.url AS id, t.content AS content"
 
-            def add_node(url_string, is_scraped=True, content=""):
-                if url_string not in all_nodes:
-                    all_nodes[url_string] = {
-                        "id": url_string,
-                        "label": create_label(url_string),
-                        "content": content if is_scraped else "📁 **Folder Directory**\n\nNo direct content was scraped for this folder, but it contains the child pages linked below."
-                    }
+        with self.driver.session() as session:
+            nodes_result = session.run(nodes_query, url=url)
+            real_nodes = [{"id": r["id"], "content": r["content"], "isVirtual": False} for r in nodes_result]
 
-            # Load all physically scraped nodes with the 15-character ghost page filter
-            for record in nodes_result:
-                url = record["id"].rstrip('/')
-                content = record.get("content") or ""
+            final_nodes = {n["id"]: n for n in real_nodes}
+            final_links = []
 
-                if len(content.strip()) > 15:
-                    add_node(url, is_scraped=True, content=content)
+            for node_id in list(final_nodes.keys()):
+                clean_url = node_id.rstrip('/')
+                parts = clean_url.replace("https://", "").replace("http://", "").split('/')
 
-            if base_url not in all_nodes:
-                add_node(base_url, is_scraped=False)
+                if len(parts) > 1:
+                    parent_path = "/".join(node_id.split('/')[:-1])
+                    if parent_path and parent_path.startswith(url.rstrip('/')):
+                        virtual_id = parent_path
+                        if virtual_id not in final_nodes:
+                            folder_name = parts[-2] if len(parts) > 1 else "Root"
+                            final_nodes[virtual_id] = {
+                                "id": virtual_id,
+                                "content": f"### 📁 Directory: {folder_name}",
+                                "isVirtual": True
+                            }
+                        final_links.append({"source": virtual_id, "target": node_id})
 
-            # Build the hierarchy mathematically
-            for url in list(all_nodes.keys()):
-                if url == base_url:
-                    continue
+            root_url = url.rstrip('/')
+            for nid, node in final_nodes.items():
+                if nid != root_url and not any(l["target"] == nid for l in final_links):
+                    final_links.append({"source": root_url, "target": nid})
 
-                current_url = url
-                while current_url != base_url and len(current_url) > len(base_url):
-                    parent_url = current_url.rsplit('/', 1)[0]
+        return {"nodes": list(final_nodes.values()), "links": final_links}
 
-                    if not parent_url.startswith(base_url):
-                        links.add((base_url, url))
-                        break
+    def execute_read_query(self, query):
+        if not self.driver: return []
+        with self.driver.session() as session:
+            result = session.run(query)
+            return [dict(record) for record in result]
 
-                    if parent_url not in all_nodes:
-                        add_node(parent_url, is_scraped=False)
-
-                    links.add((parent_url, current_url))
-                    current_url = parent_url
-
-            formatted_links = [{"source": src, "target": tgt} for src, tgt in links]
-
-            return {
-                "nodes": list(all_nodes.values()),
-                "links": formatted_links
-            }
+    def get_graph_summary(self, root_url):
+        if not self.driver: return ""
+        query = "MATCH (t:Topic) WHERE t.url STARTS WITH $root_url RETURN t.url AS url LIMIT 50"
+        with self.driver.session() as session:
+            result = session.run(query, root_url=root_url)
+            return ", ".join([r["url"] for r in result])
 
 
-db = GraphManager()
+# ==========================================
+# 🚀 INITIALIZATION
+# ==========================================
+_uri = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+_user = os.getenv("NEO4J_USERNAME") or os.getenv("NEO4J_USER", "neo4j")
+_pwd = os.getenv("NEO4J_PASSWORD")
+
+db = GraphManager(uri=_uri, user=_user, password=_pwd)

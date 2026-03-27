@@ -7,9 +7,11 @@ import warnings
 import sys
 import os
 import re
+import hashlib  # Added for de-duplication
 
 warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
+# Ensure we can import from the database folder
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 sys.path.insert(0, ROOT_DIR)
 
@@ -18,7 +20,9 @@ try:
 except ModuleNotFoundError:
     from graph_manager import db
 
+# Session tracking for de-duplication
 visited = set()
+seen_content_hashes = set()  # Added to track unique content fingerprints
 progress_queue = asyncio.Queue()
 
 
@@ -31,6 +35,11 @@ state = PipelineState()
 
 async def send_progress(msg: str):
     await progress_queue.put(msg)
+
+
+def get_content_hash(text):
+    """Creates a unique MD5 hash of the text to identify duplicates."""
+    return hashlib.md5(text.encode('utf-8')).hexdigest()
 
 
 def normalize_url(url):
@@ -75,25 +84,45 @@ def extract_content(content_obj):
 
     html = content_obj["body"]
     soup = BeautifulSoup(html, "html.parser")
+
+    # Try to grab the most specific content wrapper possible
     main = (soup.select_one("article") or soup.select_one("main") or soup.select_one("div.md-content") or soup.body)
     if not main:
         return ""
 
-    for tag in main(["nav", "header", "footer", "script", "style", "svg", "noscript", "iframe", "aside", "form"]):
+    # 🧹 1. Decompose Broad Noise Tags
+    for tag in main(
+            ["nav", "header", "footer", "script", "style", "svg", "noscript", "iframe", "aside", "form", "button"]):
         tag.decompose()
-    for menu in main.find_all(class_=["menu", "sidebar", "navigation", "toc"]):
-        menu.decompose()
+
+    # 🧹 2. Target Specific CSS Classes
+    noise_classes = ["menu", "sidebar", "navigation", "toc", "skip-link", "sr-only", "visually-hidden", "md-header",
+                     "md-sidebar"]
+    for element in main.find_all(class_=lambda c: c and any(cls in c for cls in noise_classes)):
+        element.decompose()
+
+    # 🧹 3. Specifically hunt down "Skip to content" anchor links
+    for a in main.find_all("a", string=re.compile(r'(?i)skip to content')):
+        a.decompose()
+
+    # Remove images and XML tags
     for img in main.find_all("img"):
         img.decompose()
     for xml in main.find_all(string=lambda t: t and "<?xml" in t):
         xml.extract()
 
+    # Convert the cleaned HTML to Markdown
     text = md(str(main), heading_style="ATX")
+
+    # 🧹 4. Final Text Cleanups
     text = text.replace("```xml", "```")
     text = re.sub(r'\n{3,}', '\n\n', text)
     text = text.replace("\\_", "_")
     text = text.replace("¶", "")
     text = re.sub(r'\[\s*\]\([^)]+\)', '', text)
+
+    # Catch any stray "skip to content" text that survived the HTML sweep
+    text = re.sub(r'(?i)skip to content\s*', '', text)
 
     return text.strip()
 
@@ -152,9 +181,15 @@ async def crawl_site(root_url: str, limit: int = 500):
 
             content = extract_content(fetched_data)
 
-            # --- THE FIX: Only save the page if it actually has readable content! ---
+            # 🛡️ DE-DUPLICATION CHECK
             if content and len(content.strip()) > 15:
-                db.upsert_topic(url, content)
+                content_hash = get_content_hash(content)
+
+                if content_hash in seen_content_hashes:
+                    await send_progress(f"⏩ Skipping duplicate content found at: {url}")
+                else:
+                    seen_content_hashes.add(content_hash)
+                    db.upsert_topic(url, content)
 
             await asyncio.sleep(4)
 
@@ -253,3 +288,26 @@ async def build_documentation(root_url):
     state.final_markdown = final_text
     await send_progress("📝 Raw Markdown securely saved to backend memory.")
     return "SUCCESS: The document has been saved directly to the system. Reply exactly and only with: 'Process Complete'."
+
+
+async def run_full_pipeline(root_url: str):
+    """
+    Crawls the website and then immediately builds the documentation.
+    """
+    # 1. WIPE THE GRAPH CLEAN!
+    await send_progress("🧹 Wiping old graph data for a clean slate...")
+    db.clear_database()
+
+    # Reset tracking for new pipeline run
+    visited.clear()
+    seen_content_hashes.clear()
+
+    await send_progress(f"🚀 Initializing full scrape and build pipeline for {root_url}...")
+
+    # 2. Force the crawl
+    await crawl_site(root_url, limit=500)
+
+    # 3. Force the build
+    result = await build_documentation(root_url)
+
+    return result

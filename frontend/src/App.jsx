@@ -38,7 +38,6 @@ const getLayoutedElements = (nodes, edges, direction = 'TB') => {
     const nodeWithPosition = dagreGraph.node(node.id);
     node.targetPosition = 'top';
     node.sourcePosition = 'bottom';
-    // Shift the node to its center based on its dimensions
     node.position = {
       x: nodeWithPosition.x - nodeWidth / 2,
       y: nodeWithPosition.y - nodeHeight / 2,
@@ -51,25 +50,24 @@ const getLayoutedElements = (nodes, edges, direction = 'TB') => {
 
 
 export default function App() {
-  const [url, setUrl] = useState("https://a2a-protocol.org/latest/");
-  const [limit, setLimit] = useState(500);
+  // 🚀 DEPLOYMENT CONFIG: Use Cloud URL if deployed, otherwise fallback to localhost
+  const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:8000";
+  const WS_BASE = API_BASE.replace(/^http/, 'ws');
 
+  const [url, setUrl] = useState("");
+  const [limit, setLimit] = useState(500);
   const [logs, setLogs] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [ws, setWs] = useState(null);
-
   const [activeTab, setActiveTab] = useState('console');
-
   const [chatInput, setChatInput] = useState("");
   const [chatHistory, setChatHistory] = useState([{ role: "system", text: "Documentation ready! Ask me anything about it." }]);
   const [isTyping, setIsTyping] = useState(false);
-
   const [selectedNodeData, setSelectedNodeData] = useState(null);
 
   const logsEndRef = useRef(null);
   const chatEndRef = useRef(null);
 
-  // React Flow State
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
@@ -82,7 +80,8 @@ export default function App() {
     setActiveTab('console');
     setLogs(["🔌 Connecting to A2A Backend..."]);
 
-    const liveBackendUrl = "wss://a2a-doc-scraper-api.onrender.com/ws";
+    // 🚀 USING DYNAMIC WEBSOCKET URL
+    const liveBackendUrl = `${WS_BASE}/ws`;
     const websocket = new WebSocket(liveBackendUrl);
     setWs(websocket);
 
@@ -132,54 +131,55 @@ export default function App() {
 
   const stopScraping = () => { if (ws) ws.close(); };
 
-  // --- FETCH AND FORMAT GRAPH DATA FOR REACT FLOW ---
   const fetchGraphData = async () => {
     try {
-      const res = await fetch(`https://a2a-doc-scraper-api.onrender.com/api/graph?url=${encodeURIComponent(url)}`);
+      // 🚀 USING DYNAMIC API URL
+      const res = await fetch(`${API_BASE}/api/graph?url=${encodeURIComponent(url)}`);
       const data = await res.json();
 
-      // Transform Backend Data into ReactFlow Format
-      const initialNodes = data.nodes.map((n) => ({
-        id: n.id,
-        data: {
-            // The text shown in the box
-            label: n.id.split('/').filter(Boolean).pop().replace('.html', '') || 'Home',
-            // Store the full content to pass to the sidebar later
-            fullContent: n.content,
-            url: n.id
-        },
-        position: { x: 0, y: 0 },
-        style: {
-            background: '#1e293b',
-            color: '#e2e8f0',
-            border: '1px solid #475569',
-            borderRadius: '8px',
-            padding: '10px',
-            fontSize: '12px',
-            width: 250,
-            textAlign: 'center'
-        }
-      }));
+      const initialNodes = data.nodes.map((n) => {
+        const isFolder = n.isVirtual;
+
+        return {
+          id: n.id,
+          data: {
+              label: isFolder
+                ? `📁 ${n.id.split('/').filter(Boolean).pop().toUpperCase()}`
+                : n.id.split('/').filter(Boolean).pop().replace('.html', '') || 'Home',
+              fullContent: n.content,
+              url: n.id,
+              isVirtual: isFolder
+          },
+          position: { x: 0, y: 0 },
+          style: {
+              background: isFolder ? '#334155' : '#1e293b',
+              color: isFolder ? '#fbbf24' : '#e2e8f0',
+              border: isFolder ? '2px solid #fbbf24' : '1px solid #475569',
+              borderRadius: '8px',
+              padding: '10px',
+              fontSize: isFolder ? '14px' : '12px',
+              fontWeight: isFolder ? 'bold' : 'normal',
+              width: 250,
+              textAlign: 'center',
+              boxShadow: isFolder ? '0 0 15px rgba(251, 191, 36, 0.3)' : 'none'
+          }
+        };
+      });
 
       const initialEdges = data.links.map((l, index) => ({
         id: `e${index}-${l.source}-${l.target}`,
         source: l.source,
         target: l.target,
-        type: 'smoothstep', // Gives those clean right-angle orthogonal lines
+        type: 'smoothstep',
         animated: false,
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          width: 20,
-          height: 20,
-          color: '#64748b',
-        },
+        markerEnd: { type: MarkerType.ArrowClosed, width: 20, height: 20, color: '#64748b' },
         style: { stroke: '#64748b', strokeWidth: 1.5 },
       }));
 
-      // Apply the auto-layout engine
       const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
         initialNodes,
-        initialEdges
+        initialEdges,
+        'TB'
       );
 
       setNodes(layoutedNodes);
@@ -198,7 +198,8 @@ export default function App() {
     setIsTyping(true);
 
     try {
-      const res = await fetch(`https://a2a-doc-scraper-api.onrender.com/api/chat`, {
+      // 🚀 USING DYNAMIC API URL
+      const res = await fetch(`${API_BASE}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: url, question: userMsg })
@@ -228,7 +229,6 @@ export default function App() {
     });
   };
 
-  // Node Click Handler
   const onNodeClick = useCallback((event, node) => {
     setSelectedNodeData(node.data);
   }, []);
@@ -249,6 +249,7 @@ export default function App() {
                 <Globe className="absolute left-3 top-3 w-5 h-5 text-slate-500" />
                 <input
                   type="text" value={url} onChange={(e) => setUrl(e.target.value)} disabled={isRunning}
+                  placeholder="https://example.com"
                   className="w-full bg-slate-900 border border-slate-700 rounded-lg py-2.5 pl-10 pr-4 text-white focus:outline-none focus:border-blue-500 disabled:opacity-50"
                 />
               </div>
@@ -268,7 +269,7 @@ export default function App() {
           </div>
           <div className="mt-6 flex justify-end">
             {!isRunning ? (
-              <button onClick={startScraping} className="flex items-center bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg font-medium shadow-lg transition-all">
+              <button onClick={startScraping} className="flex items-center bg-blue-600 hover:bg-blue-500 text-white px-6 py-2.5 rounded-lg font-medium shadow-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed" disabled={!url}>
                 <Play className="w-5 h-5 mr-2" /> Start Pipeline
               </button>
             ) : (
@@ -306,7 +307,6 @@ export default function App() {
             </div>
           )}
 
-          {/* REACT FLOW GRAPH TAB */}
           {activeTab === 'graph' && (
             <div className="flex-1 w-full h-full bg-[#0f172a]">
               {nodes.length > 0 ? (
@@ -364,7 +364,6 @@ export default function App() {
             </div>
           )}
 
-          {/* SIDEBAR OVERLAY */}
           {selectedNodeData && activeTab === 'graph' && (
             <div className="absolute top-0 right-0 w-96 h-full bg-slate-900 border-l border-slate-700 shadow-2xl z-50 flex flex-col animate-in slide-in-from-right duration-300">
                <div className="p-4 border-b border-slate-800 flex justify-between items-center bg-slate-800/50">
