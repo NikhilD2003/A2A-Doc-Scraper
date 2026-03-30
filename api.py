@@ -166,7 +166,7 @@ async def chat_with_docs(req: ChatRequest):
                     best_snippet = content[:4000] + "\n...[content truncated]...\n"
 
                 cleaned_results.append({
-                    "url": r['url'],
+                    "url": r.get('t.url', r.get('url', 'Unknown URL')),
                     "relevant_snippet": best_snippet.strip()
                 })
 
