@@ -143,31 +143,34 @@ async def chat_with_docs(req: ChatRequest):
 
         db_results = db.execute_read_query(raw_cypher)
 
-        # 🚀 THE NEW FIX: Intelligent Snippet Extraction (Context Windowing)
+        # 🚀 THE UPGRADED MULTI-SNIPER
         cleaned_results = []
         for r in db_results:
             content = r.get('content', '')
             if len(content) > 50:
                 content_lower = content.lower()
-                best_snippet = ""
+                snippets = []
 
-                # Scan the page for the keywords
+                # Scan the page for ALL keywords, don't stop at the first one!
                 for kw in keywords:
                     idx = content_lower.find(kw)
                     if idx != -1:
-                        # ✂️ Found it! Cut out 1000 chars before and 3000 chars after the keyword
-                        start = max(0, idx - 1000)
-                        end = min(len(content), idx + 3000)
-                        best_snippet += content[start:end] + "\n...[content truncated]...\n"
-                        break  # We got a good snippet, move to the next page
+                        # Cut out 2000 chars before and 6000 after
+                        start = max(0, idx - 2000)
+                        end = min(len(content), idx + 6000)
+                        snippets.append(content[start:end])
 
-                # If the keyword was in the URL but not the text, just grab the top of the page
-                if not best_snippet:
-                    best_snippet = content[:4000] + "\n...[content truncated]...\n"
+                # If we found snippets, combine them.
+                if snippets:
+                    # We join them together, but cap the total size per page at 12,000 characters
+                    best_snippet = "\n...[more text]...\n".join(snippets)[:12000]
+                else:
+                    # Fallback if keyword is only in the URL
+                    best_snippet = content[:6000]
 
                 cleaned_results.append({
                     "url": r.get('t.url', r.get('url', 'Unknown URL')),
-                    "relevant_snippet": best_snippet.strip()
+                    "relevant_snippet": best_snippet.strip() + "\n...[content truncated]...\n"
                 })
 
         retrieved_context = json.dumps(cleaned_results, indent=2)
