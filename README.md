@@ -1,6 +1,6 @@
 # 🕸️ A2A Autonomous Documentation Scraper
 
-Welcome to the **A2A Documentation Scraper**, an enterprise-grade, fully autonomous Agent-to-Agent (A2A) web scraping pipeline designed to transform sprawling websites and complex GitHub repositories into clean, unified Markdown documentation.
+Welcome to the **A2A Documentation Scraper**, an enterprise-grade, fully autonomous Agent-to-Agent (A2A) web scraping pipeline designed to transform sprawling websites and complex GitHub repositories into clean, unified Markdown documentation, explore them via an interactive Knowledge Graph, and chat with them using an AI-powered RAG engine.
 
 ## 🛑 The Problem
 
@@ -21,6 +21,10 @@ This project introduces a robust A2A architecture where the Large Language Model
 * 🚀 **Zero Token-Limit Failures:** Instead of forcing the AI to output massive blocks of compiled text, the Python backend securely hands off the pristine Markdown directly to system memory.
 
 * ⚡ **Real-Time WebSocket UI:** A sleek React dashboard streams live terminal progress. Once compiled, it utilizes the modern File System Access API to trigger a native "Save As" browser popup, delivering the file directly to your local machine.
+
+* 🧠 **Interactive RAG Chat:** Talk directly to your scraped documentation using OpenRouter (Nemotron 120B). Features strict anti-hallucination guardrails to ensure high accuracy.
+
+* 📊 **Visual Knowledge Graph:** Automatically generates an interactive, top-to-bottom directory tree using ReactFlow and Dagre to visualize the hierarchy of the scraped documentation.
 
 ## 🌐 Live Demo & Deployment
 
@@ -48,13 +52,15 @@ The project is split into a decoupled Client-Server architecture:
 
 5. **The Handoff:** The tools compile the graph data into a master Markdown string, bypass the AI's output generation, and send the payload directly back over the WebSocket to the React client for download.
 
+6. **The AI Chat Engine:** Uses a multi-stage RAG pipeline (Graph summary loading -> Keyword extraction -> Dynamic Cypher scoring -> Answer generation).
+
 ## 📂 Project Anatomy (File Structure)
 
 Here is a breakdown of the core files that make this pipeline work:
 
 ### Backend (Python)
 
-* `api.py`: The FastAPI server. It handles CORS, opens the WebSocket endpoint (`/ws`), initializes the AI agent, and packages the final Markdown into a JSON payload to trigger the user's download prompt.
+* `api.py`: The FastAPI server. It handles CORS, opens the WebSocket endpoint (`/ws`) with keep-alive pings, initializes the AI agent, hosts the graph/chat API endpoints, and packages the final Markdown into a JSON payload to trigger the user's download prompt.
 
 * `tools.py`: The workhorse of the scraper. It contains the async `aiohttp` crawler, the `BeautifulSoup` HTML cleaner (which strips navbars and footers), the strict URL scope checker, and the GitHub Maze filters. It compiles the final document.
 
@@ -66,11 +72,11 @@ Here is a breakdown of the core files that make this pipeline work:
 
 ### Frontend (React)
 
-* `App.jsx`: The main user interface. It features a modern, dark-mode terminal UI built with Tailwind CSS and Lucide icons. It manages the WebSocket connection, auto-scrolls live logs, and uniquely utilizes `window.showSaveFilePicker()` to handle massive file downloads natively in the browser.
+* `App.jsx`: The main user interface. It features a modern, dark-mode multi-tab UI built with Tailwind CSS and Lucide icons. It manages the WebSocket connection, auto-scrolls live logs, renders the interactive Knowledge Graph, hosts the Chat interface, and uniquely utilizes browser Blob APIs to handle massive file downloads natively.
 
 ## 💻 Tech Stack
 
-* **Frontend:** React, Vite, Tailwind CSS, Lucide React
+* **Frontend:** React, Vite, Tailwind CSS, Lucide React, ReactFlow, Dagre
 
 * **Backend:** FastAPI, Python, WebSockets, Uvicorn, aiohttp
 
@@ -78,7 +84,7 @@ Here is a breakdown of the core files that make this pipeline work:
 
 * **Data Processing:** BeautifulSoup4, Markdownify
 
-* **AI Orchestration:** Google GenAI, ADK, LiteLLM
+* **AI Orchestration:** Google GenAI, ADK, LiteLLM, OpenRouter (Nemotron 120B)
 
 ## 🚀 Getting Started (Local Development)
 
@@ -93,37 +99,42 @@ Here is a breakdown of the core files that make this pipeline work:
 ### 2. Backend Setup
 
 Clone the repository
-git clone https://github.com/NikhilD2003/A2A-Doc-Scraper.git
+
+```bash
+git clone [https://github.com/NikhilD2003/A2A-Doc-Scraper.git](https://github.com/NikhilD2003/A2A-Doc-Scraper.git)
 cd A2A-Doc-Scraper
+```
 
 Install dependencies
+
+```bash
 pip install -r requirements.txt
+```
 
-Create a .env file in the root directory
+Create a `.env` file in the root directory and add your credentials:
 
-Add your Neo4j credentials:
-
-NEO4J_URI=bolt://localhost:7687 (or your AuraDB URI)
-
+```env
+NEO4J_URI=bolt://localhost:7687  # (or your AuraDB URI)
 NEO4J_USER=neo4j
-
 NEO4J_PASSWORD=your_password
+OPENROUTER_API_KEY=your_openrouter_key
+```
 
 Start the FastAPI server
 
+```bash
 uvicorn api:app --reload --port 8000
-
+```
 
 ### 3. Frontend Setup
 
-
 Navigate to your React frontend directory (assuming it is set up via Vite)
 
+```bash
 npm install
-
 npm run dev
-
+```
 
 ### 4. Usage
 
-Open the React frontend in your browser, enter a target URL (e.g., a GitHub repository path), and click **Start Pipeline**. Watch the terminal stream live actions, and upon completion, choose where to save your generated Master Documentation!
+Open the React frontend in your browser, enter a target URL (e.g., a GitHub repository path), and click **Start Pipeline**. Watch the terminal stream live actions. Switch to the **Knowledge Graph** to explore the site structure, or use the **Chat with Docs** tab to query your scraped data!
