@@ -200,6 +200,7 @@ async def chat_with_docs(req: ChatRequest):
         GENERAL INSTRUCTIONS:
         1. REQUIRED STRUCTURE: Start with a summary, use bullet points for the mechanics, and end with a conclusion.
         2. STRICT ACCURACY: Base every single claim about security, architecture, or logic ONLY on the provided text.
+        3. PERFECT MARKDOWN: You MUST use proper spacing. ALWAYS put a blank line before and after every ``` code block. NEVER put code on the same line as the ```language tag.
 
         DATABASE CONTEXT:
         {retrieved_context}
@@ -214,6 +215,12 @@ async def chat_with_docs(req: ChatRequest):
         )
 
         raw_answer = final_response.choices[0].message.content.strip()
+
+        # 🛠️ THE JANITOR: Python Regex Auto-Formatter
+        # Fixes missing newline BEFORE code blocks: "text```python" -> "text\n\n```python"
+        raw_answer = re.sub(r'([^\n])(```)', r'\1\n\n\2', raw_answer)
+        # Fixes missing newline AFTER language tag: "```pythonapp" -> "```python\napp"
+        raw_answer = re.sub(r'(```[a-zA-Z]+)(?=[^\s\n])', r'\1\n', raw_answer)
 
         denial_triggers = [
             "FAIL_PHRASE_TRIGGERED",
