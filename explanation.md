@@ -117,7 +117,7 @@ This is the FastAPI server. It is the bridge between the Python backend on Rende
 
 ---
 
-## 5. 🔌 `local_runner.py` (The Local Remote Control)
+## 5. 🔌 `main_client.py` (The Local Remote Control)
 
 This is a standalone execution file. It allows developers to test the full ADK agent and scraping pipeline locally from a terminal without spinning up the FastAPI server or React frontend.
 
