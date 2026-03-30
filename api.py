@@ -143,7 +143,33 @@ async def chat_with_docs(req: ChatRequest):
 
         db_results = db.execute_read_query(raw_cypher)
 
-        cleaned_results = [r for r in db_results if r.get('content') and len(r['content']) > 50]
+        # 🚀 THE NEW FIX: Intelligent Snippet Extraction (Context Windowing)
+        cleaned_results = []
+        for r in db_results:
+            content = r.get('content', '')
+            if len(content) > 50:
+                content_lower = content.lower()
+                best_snippet = ""
+
+                # Scan the page for the keywords
+                for kw in keywords:
+                    idx = content_lower.find(kw)
+                    if idx != -1:
+                        # ✂️ Found it! Cut out 1000 chars before and 3000 chars after the keyword
+                        start = max(0, idx - 1000)
+                        end = min(len(content), idx + 3000)
+                        best_snippet += content[start:end] + "\n...[content truncated]...\n"
+                        break  # We got a good snippet, move to the next page
+
+                # If the keyword was in the URL but not the text, just grab the top of the page
+                if not best_snippet:
+                    best_snippet = content[:4000] + "\n...[content truncated]...\n"
+
+                cleaned_results.append({
+                    "url": r['url'],
+                    "relevant_snippet": best_snippet.strip()
+                })
+
         retrieved_context = json.dumps(cleaned_results, indent=2)
 
         # TEXT SANITIZER
