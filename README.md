@@ -54,6 +54,8 @@ The project is split into a decoupled Client-Server architecture:
 
 6. **The AI Chat Engine:** Uses a multi-stage RAG pipeline (Graph summary loading -> Keyword extraction -> Dynamic Cypher scoring -> Answer generation).
 
+![A2A.png](A2A.png)
+
 ## 📂 Project Anatomy (File Structure)
 
 Here is a breakdown of the core files that make this pipeline work:
